@@ -283,6 +283,10 @@ Stored in `integrations/mirofish/` — copy to `skills/mirofish` to enable.
 
 ## 2026-04-27 notes
 
+- GitHub/front-page positioning pass:
+  - rewrote `README.md` to behave like a project landing page instead of an internal setup doc
+  - added clearer use cases, plain-language skill framing, and sharper comparisons against chat-first and hosted agent products
+  - goal is to create stronger immediate understanding and more public interest when people land on the repo
 - Renamed the product to Caprigo:
   - public product home is `caprigoai.com`
   - marketplace remains `vibes-coded.com`

@@ -1,5 +1,6 @@
 # Project Memory
 
+- 2026-04-27 (GitHub front page pass): Rewrote the README to act like a real project landing page. Added stronger positioning, plain-language skill explanations, concrete multi-agent/local-script use cases, and high-level comparisons against chat-first copilots, hosted agent dashboards, and workflow automators so GitHub visitors understand the ambition before they install.
 - 2026-04-27 (Caprigo rename pass): Rebranded the product fully to Caprigo. Package scope is `@caprigo/*`, CLI/bin is `caprigo`, guide file is `CAPRIGO_LLM_GUIDE.md`, default data root is `~/.caprigo`, and public docs/UI copy now points to `caprigoai.com` as product home and `vibes-coded.com` as the marketplace. Removed the leftover compatibility shims from the abandoned pre-launch name.
 
 - 2026-04-27 (doctor command): Added a Caprigo-native `doctor` command modeled after the upstream project’s diagnostics posture. It reports repo/config/permissions paths locally even when the gateway is down, and adds runtime/provider/model/skills/session details when Caprigo is reachable.
