@@ -1,5 +1,7 @@
 # Caprigo
 
+[![visitors](https://myhits.vercel.app/api/hit/https%3A%2F%2Fgithub.com%2Fdoteyeso-ops%2Fcaprigo?color=blue&label=visitors&size=small)](https://myhits.vercel.app)
+
 **Caprigo** is a local-first agent workspace built for people who want AI agents to operate on a real machine, against real files, with real tools, in a way that stays visible and controllable.
 
 This is not another chat box with a thin tool wrapper.
