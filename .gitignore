@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.log
+.env
+.caprigo/
+skills/.caprigo-skills-db.json
+skills/.radbot-skills-db.json

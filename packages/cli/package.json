@@ -1,0 +1,17 @@
+{
+  "name": "@caprigo/cli",
+  "version": "1.0.0",
+  "bin": { "caprigo": "./dist/index.js" },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@caprigo/shared": "*",
+    "commander": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3"
+  }
+}

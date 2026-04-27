@@ -1,0 +1,16 @@
+{
+  "name": "@caprigo/user-skills-loader",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "description": "Loads user-defined skills from a directory at runtime",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@caprigo/shared": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "scripts": [
+    {
+      "id": "hello",
+      "name": "Hello (sample)",
+      "path": "hello.mjs",
+      "interpreter": "node",
+      "description": "Minimal sample — JSON payload to stdout (smoke test the runner)."
+    },
+    {
+      "id": "port-check",
+      "name": "Port check (TCP)",
+      "path": "port-check.mjs",
+      "interpreter": "node",
+      "description": "Test if a host:port accepts TCP (e.g. 127.0.0.1 11434 for Ollama, 18789 for Caprigo gateway). Args: [host] [port]."
+    },
+    {
+      "id": "gateway-ping",
+      "name": "Gateway ping (HTTP)",
+      "path": "gateway-ping.mjs",
+      "interpreter": "node",
+      "description": "GET /health and /api/runtime from a Caprigo base URL. Arg: base URL (default http://127.0.0.1:18789)."
+    },
+    {
+      "id": "json-prettify",
+      "name": "JSON validate & prettify file",
+      "path": "json-prettify.mjs",
+      "interpreter": "node",
+      "description": "Read a .json file, parse and return formatted structure (catches invalid JSON). Arg: file path."
+    },
+    {
+      "id": "dir-recent",
+      "name": "Directory — recent files",
+      "path": "dir-recent.mjs",
+      "interpreter": "node",
+      "description": "Non-recursive listing sorted by modified time (newest first). Args: [dir] [limit]."
+    }
+  ]
+}

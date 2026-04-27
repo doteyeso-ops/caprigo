@@ -1,0 +1,13 @@
+{
+  "servers": [
+    {
+      "id": "win",
+      "enabled": true,
+      "command": "uvx",
+      "args": ["windows-mcp"],
+      "env": {
+        "ANONYMIZED_TELEMETRY": "false"
+      }
+    }
+  ]
+}
