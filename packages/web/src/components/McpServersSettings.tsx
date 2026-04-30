@@ -103,6 +103,27 @@ interface Props {
   onSaved: (r: RuntimePayload) => void;
 }
 
+type McpPreset = {
+  key: 'filesystem' | 'github' | 'windows';
+  title: string;
+  blurb: string;
+  baseId: string;
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  windowsOnly?: boolean;
+  requirement?: string;
+};
+
+function uniqueServerId(rows: McpServerFormRow[], baseId: string): string {
+  const taken = new Set(rows.map(r => r.id.trim()).filter(Boolean));
+  if (!taken.has(baseId)) return baseId;
+  let n = 2;
+  while (taken.has(`${baseId}${n}`)) n += 1;
+  return `${baseId}${n}`;
+}
+
 export function McpServersSettings({ runtime, onSaved }: Props) {
   const [rows, setRows] = useState<McpServerFormRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,6 +132,7 @@ export function McpServersSettings({ runtime, onSaved }: Props) {
   const [jsonImport, setJsonImport] = useState('');
 
   const hostPlatform = runtime?.hostPlatform;
+  const workspaceRoot = runtime?.workspaceRoot || '';
 
   const load = useCallback(async () => {
     setErr(null);
@@ -148,6 +170,45 @@ export function McpServersSettings({ runtime, onSaved }: Props) {
     return m;
   }, [runtime?.mcp?.servers]);
 
+  const recommendedPresets = useMemo<McpPreset[]>(() => {
+    const presets: McpPreset[] = [
+      {
+        key: 'filesystem',
+        title: 'Workspace filesystem',
+        blurb: 'Give agents scoped file and directory tools for the current workspace through the official MCP filesystem server.',
+        baseId: 'fs',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-filesystem', workspaceRoot || '.'],
+        cwd: workspaceRoot || '',
+        requirement: workspaceRoot ? `Scoped to ${workspaceRoot}` : 'Uses the current gateway workspace',
+      },
+      {
+        key: 'github',
+        title: 'GitHub',
+        blurb: 'Add official GitHub MCP tools for repository and PR operations without leaving Caprigo.',
+        baseId: 'github',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-github'],
+        env: { GITHUB_PERSONAL_ACCESS_TOKEN: '' },
+        requirement: 'Requires a GitHub personal access token',
+      },
+    ];
+    if (hostPlatform === 'win32') {
+      presets.push({
+        key: 'windows',
+        title: 'Windows desktop',
+        blurb: 'Enable Windows UI automation, app control, screenshots, and desktop actions through Windows-MCP.',
+        baseId: 'win',
+        command: 'uvx',
+        args: ['windows-mcp'],
+        env: { ANONYMIZED_TELEMETRY: 'false' },
+        windowsOnly: true,
+        requirement: 'Requires uv / uvx on PATH',
+      });
+    }
+    return presets;
+  }, [hostPlatform, workspaceRoot]);
+
   const save = async () => {
     const v = validateRows(rows);
     if (v) {
@@ -182,21 +243,25 @@ export function McpServersSettings({ runtime, onSaved }: Props) {
     setErr(null);
   };
 
-  const addWindowsMcp = () => {
-    const taken = new Set(rows.map(r => r.id.trim()).filter(Boolean));
-    let id = 'win';
-    let n = 2;
-    while (taken.has(id)) {
-      id = `win${n}`;
-      n += 1;
-    }
+  const addPreset = (preset: McpPreset) => {
     addRow({
-      id,
+      id: uniqueServerId(rows, preset.baseId),
       enabled: true,
-      command: 'uvx',
-      argsText: 'windows-mcp',
-      envText: 'ANONYMIZED_TELEMETRY=false',
+      command: preset.command,
+      argsText: preset.args.join('\n'),
+      envText: preset.env
+        ? Object.entries(preset.env)
+            .map(([k, v]) => `${k}=${v}`)
+            .join('\n')
+        : '',
+      cwd: preset.cwd || '',
     });
+  };
+
+  const addWindowsMcp = () => {
+    const preset = recommendedPresets.find(item => item.key === 'windows');
+    if (!preset) return;
+    addPreset(preset);
   };
 
   const removeRow = (index: number) => {
@@ -279,6 +344,27 @@ export function McpServersSettings({ runtime, onSaved }: Props) {
         </p>
       )}
 
+      <div className="rb-mcp-presets">
+        {recommendedPresets.map(preset => (
+          <article key={preset.key} className="rb-mcp-preset">
+            <div className="rb-mcp-preset__top">
+              <strong className="rb-mcp-preset__title">{preset.title}</strong>
+              {preset.windowsOnly && <span className="rb-mcp-preset__badge">Windows</span>}
+            </div>
+            <p className="rb-mcp-preset__blurb">{preset.blurb}</p>
+            {preset.requirement && <p className="rb-mcp-preset__req">{preset.requirement}</p>}
+            <button
+              type="button"
+              className="rb-btn rb-btn--ghost"
+              onClick={() => addPreset(preset)}
+              disabled={saving}
+            >
+              Add preset
+            </button>
+          </article>
+        ))}
+      </div>
+
       <div className="rb-mcp-toolbar">
         <button type="button" className="rb-btn rb-btn--accent" onClick={() => addRow()} disabled={saving}>
           + Add server
@@ -301,8 +387,8 @@ export function McpServersSettings({ runtime, onSaved }: Props) {
       {rows.length === 0 ? (
         <div className="rb-mcp-empty">
           <p className="rb-muted">
-            No MCP servers configured. Add one to expose extra tools (e.g. Windows UI automation via Windows-MCP), then
-            click <strong>Save &amp; connect</strong>.
+            No MCP servers configured. Start with one of the recommended presets above or add a custom server, then click{' '}
+            <strong>Save &amp; connect</strong>.
           </p>
         </div>
       ) : (

@@ -1,12 +1,19 @@
-import React, { useState } from 'react';
-import type { HealthPayload, RuntimePayload, SkillListItem } from '../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import type { AgentCardModel, HealthPayload, RuntimePayload, SkillListItem } from '../types';
 import { OpenAiBaseExamplesList } from './OpenAiBaseExamplesList';
+import type { SystemMonitorPayload } from './SystemMonitorWidget';
+import { WORKFLOW_LIBRARY, type WorkflowTemplateId } from './workflows';
 
 interface Props {
   health: HealthPayload | null;
   runtime: RuntimePayload | null;
   skills: SkillListItem[];
+  agents: AgentCardModel[];
   agentCount: number;
+  onOpenSettings: () => void;
+  onOpenBuilder: () => void;
+  onOpenWorkflowLibrary: () => void;
+  onLaunchCrew: (templateId: WorkflowTemplateId) => Promise<void>;
   onReloadSkills: () => Promise<void>;
 }
 
@@ -24,11 +31,24 @@ module.exports = {
 };
 `;
 
+const VIBES_QUICK_SEARCHES = ['research', 'memory', 'json', 'browser', 'crypto', 'automation'];
+
 function StatusDot({ ok }: { ok: boolean }) {
   return <span className={`rb-config-dot${ok ? ' rb-config-dot--ok' : ' rb-config-dot--bad'}`} />;
 }
 
-export function ConfigPanel({ health, runtime, skills, agentCount, onReloadSkills }: Props) {
+export function ConfigPanel({
+  health,
+  runtime,
+  skills,
+  agents,
+  agentCount,
+  onOpenSettings,
+  onOpenBuilder,
+  onOpenWorkflowLibrary,
+  onLaunchCrew,
+  onReloadSkills,
+}: Props) {
   const [logOpen, setLogOpen] = useState(false);
   const [listOpen, setListOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -42,6 +62,8 @@ export function ConfigPanel({ health, runtime, skills, agentCount, onReloadSkill
   const [vibesErr, setVibesErr] = useState<string | null>(null);
   const [vibesInstallBusy, setVibesInstallBusy] = useState<string | null>(null);
   const [vibesInstallMsg, setVibesInstallMsg] = useState<string | null>(null);
+  const [monitor, setMonitor] = useState<SystemMonitorPayload | null>(null);
+  const [monitorErr, setMonitorErr] = useState<string | null>(null);
 
   const llm = health?.llm;
   const vibes = health?.vibes;
@@ -116,6 +138,132 @@ export function ConfigPanel({ health, runtime, skills, agentCount, onReloadSkill
   const mcpSkills = skills.filter(s => s.source === 'mcp');
   const agentSkills = skills.filter(s => s.source === 'agentskill');
   const coreSkills = skills.filter(s => s.source === 'core');
+  const fleetStats = useMemo(() => {
+    const llmAgents = agents.filter(a => a.runtimeMode !== 'offline').length;
+    const offlineAgents = agents.filter(a => a.runtimeMode === 'offline').length;
+    const thinkingAgents = agents.filter(a => a.status === 'thinking').length;
+    const erroredAgents = agents.filter(a => a.status === 'error').length;
+    const orchestrators = agents.filter(a => a.agentRole === 'orchestrator').length;
+    const linkedWorkers = agents.filter(a => a.linkedOrchestratorId).length;
+    return { llmAgents, offlineAgents, thinkingAgents, erroredAgents, orchestrators, linkedWorkers };
+  }, [agents]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | null = null;
+    const load = async () => {
+      try {
+        const r = await fetch('/api/system-monitor');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = (await r.json()) as SystemMonitorPayload;
+        if (cancelled) return;
+        setMonitor(d);
+        setMonitorErr(null);
+      } catch (e) {
+        if (cancelled) return;
+        setMonitorErr(e instanceof Error ? e.message : String(e));
+      }
+      if (!cancelled) {
+        const nextMs = document.visibilityState === 'visible' ? 12000 : 30000;
+        timer = window.setTimeout(() => void load(), nextMs);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, []);
+
+  const cpuPressure =
+    monitor?.loadavg && monitor.cpus > 0 ? Math.round((monitor.loadavg[0] / monitor.cpus) * 100) : null;
+  const memoryPressure = monitor?.memory.usedPct ?? null;
+  const pressureLabel =
+    (cpuPressure !== null && cpuPressure >= 90) || (memoryPressure !== null && memoryPressure >= 88)
+      ? 'High pressure'
+      : (cpuPressure !== null && cpuPressure >= 65) || (memoryPressure !== null && memoryPressure >= 75)
+        ? 'Watch load'
+        : 'Healthy';
+  const marketplaceReady = !!vibes?.api_base;
+  const marketplaceStatus = marketplaceSkillCount > 0 ? 'Imported' : 'Ready to import';
+  const latestMarketplaceSkill = marketplaceSkills[0] ?? null;
+  const recommendedMove = !backendReady
+    ? {
+        title: 'Finish runtime connection',
+        detail: 'The backend is not fully reachable yet. Confirm provider, base URL, and model in Settings before launching crews.',
+        actionLabel: 'Open Settings',
+        actionKind: 'settings' as const,
+      }
+    : agentCount === 0
+      ? {
+          title: 'Create the first focused agent',
+          detail: 'Start with one worker or launch a small starter crew once runtime and model checks are healthy.',
+          actionLabel: 'Create agent',
+          actionKind: 'builder' as const,
+        }
+      : fleetStats.orchestrators === 0
+        ? {
+            title: 'Launch a coordinated crew',
+            detail: 'You already have agents. Add an orchestrator-led starter crew so Board orchestration becomes visible immediately.',
+            actionLabel: 'Launch Repo Crew',
+            actionKind: 'repo-crew' as const,
+          }
+        : marketplaceSkillCount === 0
+          ? {
+              title: 'Import one marketplace tool',
+              detail: 'Vibes-Coded is ready. Add one marketplace tool so Caprigo has a more outcome-specific capability set.',
+              actionLabel: 'Try research',
+              actionKind: 'marketplace-research' as const,
+            }
+          : {
+              title: 'Run a PR review workflow',
+              detail: 'Runtime, crews, and marketplace imports are in place. The next strong workflow is a structured review pass over a patch, branch, or local diff before merge.',
+              actionLabel: 'Launch PR Review Crew',
+              actionKind: 'pr-review-crew' as const,
+            };
+
+  const triggerRecommendedMove = () => {
+    if (recommendedMove.actionKind === 'builder') {
+      onOpenBuilder();
+      return;
+    }
+    if (recommendedMove.actionKind === 'repo-crew') {
+      void onLaunchCrew('repo-coding');
+      return;
+    }
+    if (recommendedMove.actionKind === 'automation-crew') {
+      void onLaunchCrew('offline-automation');
+      return;
+    }
+    if (recommendedMove.actionKind === 'launch-audit-crew') {
+      void onLaunchCrew('launch-audit');
+      return;
+    }
+    if (recommendedMove.actionKind === 'pr-review-crew') {
+      void onLaunchCrew('pr-review');
+      return;
+    }
+    if (recommendedMove.actionKind === 'marketplace-research') {
+      setVibesQuery('research');
+      void (async () => {
+        setVibesLoading(true);
+        setVibesErr(null);
+        try {
+          const r = await fetch('/api/vibes/listings?q=research&page_size=24');
+          const d = (await r.json()) as { listings?: typeof vibesHits; error?: string };
+          if (!r.ok) throw new Error(d.error || `Search failed (${r.status})`);
+          setVibesHits(d.listings || []);
+        } catch (e) {
+          setVibesErr(e instanceof Error ? e.message : String(e));
+          setVibesHits([]);
+        } finally {
+          setVibesLoading(false);
+        }
+      })();
+      return;
+    }
+    onOpenSettings();
+  };
 
   const searchVibesListings = async () => {
     setVibesLoading(true);
@@ -188,6 +336,75 @@ export function ConfigPanel({ health, runtime, skills, agentCount, onReloadSkill
         </p>
       </div>
 
+      <div className="rb-config__card rb-config__card--next">
+        <h3 className="rb-config__h">Recommended next move</h3>
+        <p className="rb-config__detail">
+          <strong>{recommendedMove.title}</strong>
+        </p>
+        <p className="rb-muted rb-config__detail">{recommendedMove.detail}</p>
+        <div className="rb-config__skills-actions">
+          <button type="button" className="rb-btn rb-btn--accent" onClick={triggerRecommendedMove}>
+            {recommendedMove.actionLabel}
+          </button>
+          {backendReady && agentCount === 0 && (
+            <button type="button" className="rb-btn rb-btn--ghost" onClick={onOpenWorkflowLibrary}>
+              Browse workflows
+            </button>
+          )}
+          {backendReady && agentCount > 0 && (
+            <>
+              <button type="button" className="rb-btn rb-btn--ghost" onClick={onOpenBuilder}>
+                New agent
+              </button>
+              <button type="button" className="rb-btn rb-btn--ghost" onClick={onOpenWorkflowLibrary}>
+                Workflow library
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="rb-config__card">
+        <h3 className="rb-config__h">Workflow library</h3>
+        <p className="rb-config__detail">
+          Built-in workflow crews package Caprigo’s orchestrator model into concrete outcomes. These are product workflows, not marketplace tools; Vibes-Coded remains the path for importing external capabilities.
+        </p>
+        <div className="rb-config__skills-actions">
+          <button type="button" className="rb-btn rb-btn--accent" onClick={onOpenWorkflowLibrary}>
+            Open workflow library
+          </button>
+        </div>
+        <div className="rb-workflow-grid">
+          {WORKFLOW_LIBRARY.map(flow => (
+            <article key={flow.id} className="rb-workflow-card">
+              <div className="rb-workflow-card__top">
+                <strong className="rb-workflow-card__title">{flow.title}</strong>
+                <span className="rb-workflow-card__roles">{flow.roles}</span>
+              </div>
+              <p className="rb-workflow-card__blurb">{flow.blurb}</p>
+              <p className="rb-workflow-card__best">
+                <span className="rb-muted">Best for</span> {flow.bestFor}
+              </p>
+              <div className="rb-workflow-card__actions">
+                <button
+                  type="button"
+                  className="rb-btn rb-btn--ghost"
+                  disabled={!backendReady}
+                  onClick={() => void onLaunchCrew(flow.id)}
+                >
+                  Launch
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+        {!backendReady && (
+          <p className="rb-hint rb-hint--tight">
+            Finish runtime connection first. Workflow crews depend on a reachable backend and model.
+          </p>
+        )}
+      </div>
+
       <div className="rb-config__card">
         <h3 className="rb-config__h">Engine</h3>
         {runtime ? (
@@ -220,6 +437,54 @@ export function ConfigPanel({ health, runtime, skills, agentCount, onReloadSkill
         ) : (
           <p className="rb-muted">Loading…</p>
         )}
+      </div>
+
+      <div className="rb-config__card">
+        <h3 className="rb-config__h">Fleet resource view</h3>
+        <p className="rb-config__detail">
+          <strong>{pressureLabel}</strong>
+          <span className="rb-muted">
+            {' '}
+            · {fleetStats.thinkingAgents} thinking · {fleetStats.offlineAgents} offline · {fleetStats.orchestrators} orchestrators
+          </span>
+        </p>
+        <div className="rb-config__resource-grid">
+          <div className="rb-config__resource">
+            <span className="rb-config__resource-label">CPU load</span>
+            <strong className="rb-config__resource-value">
+              {cpuPressure !== null ? `${cpuPressure}% of ${monitor?.cpus ?? 0} cores` : '—'}
+            </strong>
+            <div className="rb-config__resource-bar">
+              <span
+                className={`rb-config__resource-fill${cpuPressure !== null && cpuPressure >= 90 ? ' rb-config__resource-fill--bad' : ''}`}
+                style={{ width: `${Math.max(6, Math.min(100, cpuPressure ?? 6))}%` }}
+              />
+            </div>
+          </div>
+          <div className="rb-config__resource">
+            <span className="rb-config__resource-label">Memory</span>
+            <strong className="rb-config__resource-value">
+              {memoryPressure !== null ? `${memoryPressure}% used` : '—'}
+            </strong>
+            <div className="rb-config__resource-bar">
+              <span
+                className={`rb-config__resource-fill${memoryPressure !== null && memoryPressure >= 88 ? ' rb-config__resource-fill--bad' : ''}`}
+                style={{ width: `${Math.max(6, Math.min(100, memoryPressure ?? 6))}%` }}
+              />
+            </div>
+          </div>
+        </div>
+        <p className="rb-config__detail">
+          Fleet: {fleetStats.llmAgents} LLM · {fleetStats.offlineAgents} local · {fleetStats.linkedWorkers} linked workers ·{' '}
+          {fleetStats.erroredAgents} errors
+        </p>
+        {monitor && (
+          <p className="rb-hint rb-hint--tight">
+            Gateway RSS {monitor.memory.processRssMb} MB{monitor.disk ? ` · Disk ${monitor.disk.usedPct}% used` : ''} · Updated{' '}
+            {new Date(monitor.fetchedAt).toLocaleTimeString()}
+          </p>
+        )}
+        {monitorErr && <p className="rb-muted rb-hint rb-hint--tight">Monitor unavailable: {monitorErr}</p>}
       </div>
 
       <div className="rb-config__card">
@@ -299,6 +564,51 @@ export function ConfigPanel({ health, runtime, skills, agentCount, onReloadSkill
           <code className="rb-code">skills</code> folder. Paid or gated listings may need{' '}
           <code className="rb-code">VIBES_CODED_API_KEY</code> on the gateway.
         </p>
+        <div className="rb-config__marketplace-top">
+          <div className="rb-config__marketplace-stat">
+            <span className="rb-config__marketplace-label">Marketplace</span>
+            <strong>{marketplaceStatus}</strong>
+            <span className="rb-muted">
+              {marketplaceReady ? `${marketplaceSkillCount} imported skill${marketplaceSkillCount === 1 ? '' : 's'}` : 'Waiting for gateway marketplace config'}
+            </span>
+          </div>
+          <div className="rb-config__marketplace-stat">
+            <span className="rb-config__marketplace-label">Latest import</span>
+            <strong>{latestMarketplaceSkill?.vibesTitle || latestMarketplaceSkill?.name || 'None yet'}</strong>
+            <span className="rb-muted">
+              {latestMarketplaceSkill?.vibesListingId ? `Listing ${latestMarketplaceSkill.vibesListingId}` : 'Install from Vibes-Coded to register a marketplace tool'}
+            </span>
+          </div>
+        </div>
+        <div className="rb-config__marketplace-chips" aria-label="Quick marketplace searches">
+          {VIBES_QUICK_SEARCHES.map(term => (
+            <button
+              key={term}
+              type="button"
+              className={`rb-chip${vibesQuery.trim().toLowerCase() === term ? ' rb-chip--active' : ''}`}
+              onClick={() => {
+                setVibesQuery(term);
+                void (async () => {
+                  setVibesLoading(true);
+                  setVibesErr(null);
+                  try {
+                    const r = await fetch(`/api/vibes/listings?q=${encodeURIComponent(term)}&page_size=24`);
+                    const d = (await r.json()) as { listings?: typeof vibesHits; error?: string };
+                    if (!r.ok) throw new Error(d.error || `Search failed (${r.status})`);
+                    setVibesHits(d.listings || []);
+                  } catch (e) {
+                    setVibesErr(e instanceof Error ? e.message : String(e));
+                    setVibesHits([]);
+                  } finally {
+                    setVibesLoading(false);
+                  }
+                })();
+              }}
+            >
+              {term}
+            </button>
+          ))}
+        </div>
         <div className="rb-vibes-search">
           <input
             className="rb-input"
@@ -315,7 +625,24 @@ export function ConfigPanel({ health, runtime, skills, agentCount, onReloadSkill
           >
             {vibesLoading ? 'Searching…' : 'Search'}
           </button>
+          <button
+            type="button"
+            className="rb-btn rb-btn--ghost"
+            disabled={vibesLoading || (!vibesQuery.trim() && vibesHits.length === 0)}
+            onClick={() => {
+              setVibesQuery('');
+              setVibesHits([]);
+              setVibesErr(null);
+            }}
+          >
+            Clear
+          </button>
         </div>
+        {!vibesErr && vibesHits.length > 0 && (
+          <p className="rb-hint rb-hint--tight">
+            {vibesHits.length} listing{vibesHits.length === 1 ? '' : 's'} ready to import from Vibes-Coded into your local Caprigo skill catalog.
+          </p>
+        )}
         {vibesErr && <p className="rb-skill-add__err">{vibesErr}</p>}
         {vibesHits.length > 0 && (
           <ul className="rb-vibes-hits" aria-label="Search results">
@@ -337,6 +664,25 @@ export function ConfigPanel({ health, runtime, skills, agentCount, onReloadSkill
               </li>
             ))}
           </ul>
+        )}
+        {marketplaceSkills.length > 0 && (
+          <div className="rb-config__marketplace-imports">
+            <h4 className="rb-skill-list__heading">Installed marketplace tools</h4>
+            <ul className="rb-config__marketplace-list" aria-label="Installed marketplace tools">
+              {marketplaceSkills.slice(0, 4).map(skill => (
+                <li key={skill.name} className="rb-config__marketplace-item">
+                  <strong className="rb-mono">{skill.vibesTitle || skill.name}</strong>
+                  <span className="rb-muted">
+                    {skill.description}
+                    {skill.vibesListingId ? ` · listing ${skill.vibesListingId}` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {marketplaceSkills.length > 4 && (
+              <p className="rb-hint rb-hint--tight">+{marketplaceSkills.length - 4} more marketplace tools listed in Skills below.</p>
+            )}
+          </div>
         )}
         {vibesInstallMsg && (
           <p className={vibesInstallMsg.startsWith('Installed') ? 'rb-skill-add__ok' : 'rb-skill-add__err'}>{vibesInstallMsg}</p>

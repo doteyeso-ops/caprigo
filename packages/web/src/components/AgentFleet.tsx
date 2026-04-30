@@ -8,6 +8,8 @@ interface Props {
   selectedId: string | null;
   localScripts: LocalScriptItem[];
   onSelect: (id: string) => void;
+  onOpenBoard: (id: string) => void;
+  onOpenSession: (id: string) => void;
   onClose: (id: string) => void;
   onRename: (id: string) => void;
   onOpenBuilder: () => void;
@@ -21,6 +23,8 @@ export function AgentFleet({
   selectedId,
   localScripts,
   onSelect,
+  onOpenBoard,
+  onOpenSession,
   onClose,
   onRename,
   onOpenBuilder,
@@ -76,7 +80,7 @@ export function AgentFleet({
         )}
       </div>
 
-      <OrchestrationFeedStrip />
+      <OrchestrationFeedStrip pollMs={9000} />
 
       {agents.length === 0 ? (
         <div className="rb-empty-fleet">
@@ -96,6 +100,8 @@ export function AgentFleet({
               localNameById={localNameById}
               selected={selectedId === a.id}
               onSelect={() => onSelect(a.id)}
+              onOpenBoard={() => onOpenBoard(a.id)}
+              onOpenSession={() => onOpenSession(a.id)}
               onRename={() => onRename(a.id)}
               onEdit={() => onEditAgent(a.id)}
               onClose={() => onClose(a.id)}

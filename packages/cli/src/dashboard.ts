@@ -1,4 +1,4 @@
-import { framedSection, bold, dim, ok, bad, muted, titleLine } from './style';
+import { framedSection, bold, ok, bad, muted, brandHeader } from './style';
 import { gatewayJson, getGatewayUrl } from './gateway-client';
 
 interface Health {
@@ -47,18 +47,31 @@ export async function runDashboard(): Promise<void> {
   }
 
   console.log('');
-  console.log(titleLine('  CAPRIGO  '));
-  console.log(dim('  Core · CLI & gateway'));
+  console.log(brandHeader('CAPRIGO', 'Capricorn x Virgo', 'Local-first agents with a quieter terminal'));
   console.log('');
 
   if (errMsg) {
-    console.log(framedSection('Gateway', [bad('Unreachable'), '', muted(errMsg), '', muted(`Expected: ${base}`), muted('Start the gateway: npm run start (repo root)')]));
+    console.log(
+      framedSection('Gateway', [
+        bad('Unreachable'),
+        '',
+        muted(errMsg),
+        '',
+        muted(`Expected: ${base}`),
+        muted('Start the gateway: npm run start (repo root)'),
+      ])
+    );
     console.log('');
     return;
   }
 
   const llm = health?.llm;
-  const prov = llm?.provider === 'ollama' ? 'Ollama' : llm?.provider === 'openai_compatible' ? 'OpenAI-compatible' : (llm?.provider ?? '—');
+  const prov =
+    llm?.provider === 'ollama'
+      ? 'Ollama'
+      : llm?.provider === 'openai_compatible'
+        ? 'OpenAI-compatible'
+        : (llm?.provider ?? '-');
   const llmOk =
     llm?.provider === 'ollama'
       ? llm?.ollama === 'ok'
@@ -67,13 +80,14 @@ export async function runDashboard(): Promise<void> {
         : true;
   const llmState = !llm ? muted('no probe') : llmOk ? ok('ready') : bad('check connection');
 
+  const badge = llm?.badge ? ` ${muted(`· ${llm.badge}`)}` : '';
   const lines = [
     `${bold('Gateway')}     ${muted(base)}`,
-    `${bold('Workspace')}   ${muted(runtime?.workspaceRoot ?? '—')}`,
-    `${bold('Skills dir')}   ${muted(runtime?.skillsDir ?? '—')}`,
+    `${bold('Workspace')}   ${muted(runtime?.workspaceRoot ?? '-')}`,
+    `${bold('Skills dir')}  ${muted(runtime?.skillsDir ?? '-')}`,
     '',
-    `${bold('LLM')}         ${prov}${llm?.badge ? dim(` · ${llm.badge}`) : ''}  ${llmState}`,
-    `${bold('Model')}       ${muted(runtime?.engine?.model ?? '—')}`,
+    `${bold('LLM')}         ${prov}${badge}  ${llmState}`,
+    `${bold('Model')}       ${muted(runtime?.engine?.model ?? '-')}`,
     '',
     `${bold('Tools')}       ${String(skillCount)} registered`,
     `${bold('Sessions')}    ${String(sessionCount)} agents`,
@@ -81,13 +95,16 @@ export async function runDashboard(): Promise<void> {
 
   console.log(framedSection('Status', lines));
   console.log('');
-  console.log(dim('Commands'));
-  console.log(`  ${bold('caprigo open')}          ${muted('Open dashboard in browser')}`);
-  console.log(`  ${bold('caprigo agents list')}   ${muted('Fleet table')}`);
-  console.log(`  ${bold('caprigo agents create')} ${muted('--name "…"')}`);
-  console.log(`  ${bold('caprigo chat')}          ${muted('<id> -m "…"')}`);
-  console.log(`  ${bold('caprigo skills')}        ${muted('Tool catalog')}`);
-  console.log(`  ${bold('caprigo models')}        ${muted('List models (Ollama / API)')}`);
-  console.log(`  ${bold('caprigo onboard')}       ${muted('Setup reference')}`);
+  console.log(
+    framedSection('Quick commands', [
+      `${bold('caprigo open')}          ${muted('Open Overview in the browser')}`,
+      `${bold('caprigo agents list')}   ${muted('Inspect the fleet')}`,
+      `${bold('caprigo agents create')} ${muted('--name "Reviewer"')}`,
+      `${bold('caprigo chat')}          ${muted('<id> -m "Summarize package.json"')}`,
+      `${bold('caprigo skills')}        ${muted('Review the tool catalog')}`,
+      `${bold('caprigo models')}        ${muted('Probe the active model source')}`,
+      `${bold('caprigo onboard')}       ${muted('Print the setup path')}`,
+    ])
+  );
   console.log('');
 }

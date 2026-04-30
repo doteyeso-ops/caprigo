@@ -40,7 +40,7 @@ interface Props {
   onPin?: () => void;
 }
 
-export function SystemMonitorWidget({ layout, pollMs = 2500, onPin }: Props) {
+export function SystemMonitorWidget({ layout, pollMs = 10000, onPin }: Props) {
   const [data, setData] = useState<SystemMonitorPayload | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -57,9 +57,20 @@ export function SystemMonitorWidget({ layout, pollMs = 2500, onPin }: Props) {
   }, []);
 
   useEffect(() => {
-    void load();
-    const id = window.setInterval(() => void load(), pollMs);
-    return () => clearInterval(id);
+    let cancelled = false;
+    let timer: number | null = null;
+    const tick = async () => {
+      if (cancelled) return;
+      await load();
+      if (cancelled) return;
+      const nextMs = document.visibilityState === 'visible' ? pollMs : pollMs * 4;
+      timer = window.setTimeout(() => void tick(), nextMs);
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
   }, [load, pollMs]);
 
   const cls = layout === 'docked' ? 'rb-monitor rb-monitor--docked' : 'rb-monitor rb-monitor--embedded';

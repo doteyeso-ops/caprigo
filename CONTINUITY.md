@@ -199,6 +199,10 @@ Stored in `integrations/mirofish/` — copy to `skills/mirofish` to enable.
 
 ## Recent progress (2026-04-27)
 
+- Phase 2 kickoff (`workflow recipes` MVP):
+  - Added Board-level **Workflow Recipes** as reusable orchestrator launch presets.
+  - Recipes persist locally (`localStorage`) and include built-in workflow template selection, trigger metadata (`manual`, `file-change`, `daily-sweep` + condition), and optional lead markdown injected into the orchestrator session at launch.
+  - This intentionally stays local/app-layer only (no new backend scheduler/service) to keep the iteration lightweight, inspectable, and compatible with the current architecture.
 - Upstream merge pass 2 (`doctor`):
   - Added `caprigo doctor` as a support-grade diagnostic command.
   - It reports local `.env`, permissions, workspace, data-root, and gateway paths even when Caprigo is down.
@@ -283,10 +287,126 @@ Stored in `integrations/mirofish/` — copy to `skills/mirofish` to enable.
 
 ## 2026-04-27 notes
 
-- GitHub/front-page positioning pass:
-  - rewrote `README.md` to behave like a project landing page instead of an internal setup doc
-  - added clearer use cases, plain-language skill framing, and sharper comparisons against chat-first and hosted agent products
-  - goal is to create stronger immediate understanding and more public interest when people land on the repo
+- Polling optimization pass:
+  - session polling is no longer fixed at `800ms`
+  - agent/status/system-monitor/orchestration refresh now backs off when the tab is hidden
+  - goal is lower background CPU/network churn on laptops while keeping the UI responsive when the workspace is active
+- Terminal noise + polish pass:
+  - gateway request logging now defaults to `CAPRIGO_REQUEST_LOG=smart`
+  - routine GET poll traffic is suppressed from stdout: `/health`, `/readyz`, `/api/runtime`, `/api/sessions`, `/api/system-monitor`, and orchestration-feed reads
+  - web polling was relaxed again for fleet refresh, runtime refresh, orchestration feed, and system monitor widgets
+  - CLI dashboard and `launch.ps1` now carry the "Capricorn x Virgo" branding with cleaner terminal framing
+- Token-efficiency pass 1:
+  - Added explicit prompt-budget controls for global guide injection, agent instruction files, inline instructions, compacted history, and tool-result echo.
+  - Older session context now compresses into an “earlier conversation digest” after a recent-message window instead of replaying the entire chat verbatim.
+  - Tool results sent back into the next model step are now capped, which should materially reduce prompt bloat after file reads, HTTP calls, or large JSON outputs.
+  - Docs and `.env.example` now expose these knobs so token/cost tuning is intentional.
+- Repo-aware context pass 1:
+  - Added built-in `repo_map` skill for compact structural workspace mapping.
+  - Current implementation is regex/syntax-heuristic based, not tree-sitter yet, but it already gives the agent file-relative class/function/interface/method context at much lower prompt cost than full-file injection.
+  - Logical next step is combining `repo_map` + `search_files` + targeted `read_file` into a deliberate retrieval pipeline before the model sees large code bodies.
+- Repo-aware context pass 2:
+  - Added built-in `codebase_context` skill as that retrieval pipeline’s first concrete surface.
+  - It returns candidate files, search hits, and compact repo-map slices in one response so the agent can choose 1-3 files to read instead of exploring blindly.
+  - Next logical upgrade is tree-sitter-backed symbol extraction and/or lightweight relevance scoring beyond literal text hits.
+- Repo-aware context pass 3:
+  - Added lightweight relevance scoring to `codebase_context` and exposed ranked candidates with reasons.
+  - Ranking currently uses a bounded heuristic: direct text hits, path token overlap, and symbol/signature overlap.
+  - This is intentionally still cheap/local and roadmap-safe; it improves retrieval quality without introducing persistent indexing, embeddings, or a larger background service.
+- Trace visibility pass 1:
+  - Extended the existing execution log instead of creating a new observability subsystem.
+  - Execution-log rows now include compact result summaries and output-size proxies, which helps explain retrieval choices and rough prompt/cost pressure.
+  - Added per-session trace API plus a recent trace panel in agent details so operators can inspect recent tool/retrieval behavior in the product UI.
+  - This satisfies the immediate roadmap need for replay/cost visibility while staying intentionally small.
+- Repo-aware context pass 4:
+  - Added AST-backed symbol extraction for TypeScript/JavaScript-family files using the TypeScript parser.
+  - `repo_map` and `codebase_context` now have a more trustworthy symbol layer for the repo’s primary implementation language, while non-TS/JS files still fall back to the existing heuristic extraction.
+  - This is still roadmap-safe: better structural retrieval quality without adding persistent indexes, embeddings, or a separate parser service.
+- Fleet UX pass 1:
+  - Board toolbar can now launch two starter crews directly: `Repo Crew` and `Automation Crew`.
+  - Board context menu now supports direct role conversion (`agent` <-> `orchestrator`) and cleaner attach/detach flows instead of relying on the older source-centric chain action alone.
+  - Board cards now surface fleet status more clearly: worker counts for orchestrators and reporting-pill state for linked workers.
+  - Implementation is intentionally app-layer only for now: no separate crew-template persistence/API yet, which keeps the feature incremental and easy to revise.
+- Fleet UX pass 2:
+  - Board now gives visible feedback after launching a starter crew instead of silently dropping new sessions onto the canvas.
+  - Role conversion is safer: orchestrators with attached workers cannot be downgraded until the links are removed, and a worker being promoted to orchestrator confirms detaching from its current crew.
+  - Selected crew relationships are easier to read because related cards now get a lighter crew highlight and selected orchestrators/workers receive clearer lead/member labeling.
+- MCP polish pass 1:
+  - Settings now starts with curated MCP recommendations instead of only a blank server form.
+  - Added one-click presets for the official workspace filesystem server and official GitHub server, plus Windows-MCP on Windows hosts.
+  - Presets still write into the same saved MCP config and require the user to click `Save & connect`, so the UX is better without changing gateway persistence or bridge behavior.
+- Trace visibility pass 2:
+  - Recent trace entries now include a compact deterministic `why` summary so users can see why a tool was called without asking the model to generate extra reasoning text.
+  - Added session trace export as markdown or JSON from the agent details dialog, built on top of the existing execution-log data instead of a new observability service.
+  - Offline script trace rows now also record rationale, output-size estimates, and compact result summaries so replay is more uniform across LLM and offline flows.
+- Resource dashboard pass 1:
+  - Overview now includes a lightweight fleet-resource card instead of making users open the full system monitor for every check.
+  - The card combines host pressure from `/api/system-monitor` with fleet state: thinking agents, offline agents, orchestrators, linked workers, errors, and gateway RSS.
+  - This stays intentionally simple and local: no per-agent profiler or new backend metrics service, just better operator visibility on laptop load.
+- Vibes-Coded polish pass 1:
+  - Overview marketplace import now feels more like a product surface and less like a raw search box.
+  - Added quick-search chips, a marketplace readiness/import summary, and a compact installed-marketplace-tools list so users can see what Vibes-Coded has already added to Caprigo.
+  - This was kept separate from MCP on purpose: Vibes-Coded remains the marketplace story, while MCP remains the integration/configuration story.
+- Overview workflow pass 1:
+  - Added a small action layer in Overview that recommends the next concrete move from current state instead of only showing status.
+  - The card can now route users straight into Settings, the agent builder, a starter crew launch, or a Vibes-Coded search depending on what is missing.
+  - This is still lightweight productization: it guides the existing flows rather than introducing a new onboarding engine or persistence model.
+- Handoff polish pass 1:
+  - Overview fleet cards now give direct continuation actions instead of forcing users to infer whether Session or Board is the right next stop.
+  - LLM agents can jump straight into Session, offline agents jump to Board, and both keep a fast Details path on the card face.
+  - Session now exposes quick `Open board` / `Agent details` actions plus a small crew-role hint so orchestrators and linked workers feel connected to fleet operations instead of isolated chat tabs.
+- Board crew grouping pass 1:
+  - The Board canvas now renders a lightweight labeled shell behind each orchestrator-led crew instead of showing only individual cards and arrows.
+  - Group bounds are derived from the existing saved card positions, so drag behavior and layout persistence stay unchanged.
+  - This is intentionally visual-only: it improves fleet readability without introducing a new crew entity, auto-layout engine, or backend schema.
+- Board crew actions pass 1:
+  - Selecting any member of a crew now reveals a compact crew strip above the canvas.
+  - The strip shows the lead, worker count, member chips, and direct lead actions so users can move around a crew without relying only on scattered card context menus.
+  - This keeps the crew model lightweight and local to the existing Board UI; no new orchestration API or crew persistence layer was introduced.
+- Starter crew guidance pass 1:
+  - The transient Board launch notice now carries a real starter brief for the two built-in crews instead of only announcing that sessions were created.
+  - Each crew now points users toward the lead first, includes a short checklist for the first task, and offers a one-click `Open lead session` action.
+  - This remains app-layer only: no template backend, stored playbooks, or auto-generated first prompt yet.
+- Starter crew guidance pass 2:
+  - That `Open lead session` action now also seeds the Session composer with a structured starter draft for each built-in crew.
+  - `Repo Crew` starts with a repo-task framing prompt; `Automation Crew` starts with a local-run framing prompt.
+  - This is still intentionally lightweight: no saved per-crew prompt library or new backend template model, just a better first-use handoff.
+- Trace summary pass 1:
+  - The recent-trace panel now does more than list entries; it derives a quick pressure summary from the existing session trace.
+  - Users can now see whether a session looks light, worth watching, or heavy based on recent call count, output volume, and total duration, plus the slowest tool, noisiest tool, and latest failure.
+  - This stayed frontend-only on purpose so we did not add a new observability endpoint for what is essentially a presentation-layer summary.
+- Workflow template pass 1:
+  - Added `Launch Audit Crew` as the first more market-facing built-in workflow after the base starter crews.
+  - It is now launchable from Overview and Board, creates a lead plus two focused workers (`Surface Checker` and `Risk Reviewer`), and ships with the same lead-first guidance/draft pattern as the other crews.
+  - This keeps workflow packaging app-layer for now: no reusable template backend yet, but users now have a concrete launch-readiness workflow instead of only generic crews.
+- Workflow template pass 2:
+  - Added `PR Review Crew` as the next packaged workflow in the same family.
+  - It is also launchable from Overview and Board and uses a lead-plus-workers pattern: `PR Review Lead`, `Diff Scout`, and `Risk Reviewer`.
+  - The workflow is intentionally local-first: it can frame a hosted PR, branch, patch, or plain local diff without depending on a GitHub-only path.
+- Workflow library pass 1:
+  - Overview now includes a lightweight `Workflow library` card instead of making users discover packaged crews only through scattered buttons and recommendations.
+  - The library lists each built-in crew with role makeup, use-case framing, and direct launch actions.
+  - This is still lightweight and UI-only; it is a discovery layer over the existing built-in workflow launches, not a reusable workflow registry yet.
+- Workflow library pass 2:
+  - Added a shared workflow launcher dialog and a single workflow-library definition file for the built-in crews.
+  - Board and Overview can now open the same workflow picker instead of each growing their own launch-button set.
+  - This keeps the workflow layer consistent without introducing backend workflow persistence or a full workflow marketplace yet.
+- Workflow metadata pass 1:
+  - Session and agent details now surface lightweight built-in workflow identity after a crew is launched.
+  - The UI infers workflow context from the lead/member naming pattern and shows what the workflow is for plus whether the current session is the lead or a member.
+  - This keeps workflow explanation app-side and cheap; no backend workflow metadata or migration was introduced.
+- Trace estimate pass 1:
+  - Extended the recent-trace summary with rough context-token and output-token estimates plus a low/watch/high cost signal.
+  - These values are explicitly heuristic and derived from trace text volume and tool output size, not from provider billing APIs.
+  - This keeps the trust/cost layer lightweight while still warning users when a session is becoming context-heavy or operationally expensive.
+- Trace warning pass 1:
+  - Added lightweight per-session warnings on top of that heuristic layer.
+  - Session now shows an inline warning when the selected agent's recent trace looks heavy, and Board cards now get a `Heavy` badge when their recent trace trends high.
+  - The warning path reuses a shared frontend trace helper and the existing `/api/execution-log` tail; no new backend API was introduced.
+- Trace estimate pass 2:
+  - Added the same rough estimate block to the gateway-side session trace summary and export path.
+  - Session trace totals and markdown/JSON exports now include estimated context tokens, output tokens, total tokens, pressure, and cost signal.
+  - This keeps the live UI and exported replay artifacts aligned without adding provider-specific billing integrations.
 - Renamed the product to Caprigo:
   - public product home is `caprigoai.com`
   - marketplace remains `vibes-coded.com`
@@ -297,3 +417,14 @@ Stored in `integrations/mirofish/` — copy to `skills/mirofish` to enable.
 - Fixed the remaining legacy data-root leak. `caprigoDataRoot()` now prefers `~/.caprigo` unless `CAPRIGO_HOME` is explicitly set, and migrated legacy home data forward on this machine so `caprigo doctor` no longer reports the old branded path as Caprigo's active runtime root.
 - [x] **In-process MCP client** — stdio servers, `mcp-servers.json`, `/api/mcp-servers`, Settings UI
 - [x] **Windows-MCP** — docs + example configs (`integrations/windows-mcp`)
+- 2026-04-27 website note:
+  - Built the first `caprigoai.com` site in `C:\Users\Laptop\Desktop\New folder\Tools\Caprigo - Website`.
+  - Stack is Next.js 16 with a single landing page, earth-tone brand direction, install guidance, and SEO essentials baked in.
+  - Current deployment target is Railway with `npm run build` and `npm run start`.
+  - Added a live stats strip and `/api/stats`; Railway Postgres can now back persistent site views while install/download totals remain env-driven until a real release/download source is wired in.
+  - Created a private GitHub repo at `doteyeso-ops/caprigo-website` and pushed `main`, so the site is ready to import into Railway.
+  - Live Railway service now exists at `caprigo-website-production.up.railway.app`; runtime stats are DB-backed and no longer depend on build-time DB access.
+- 2026-04-29 runtime smoke:
+  - Build still passes: `npm run build` and `npm run build:web`.
+  - Live API smoke passed against local gateway on `127.0.0.1:18789`: created offline session, ran `gateway-ping`, verified `/api/sessions/:id/execution-log` plus markdown/JSON export include `rationale`, `resultSummary`, `outputChars`, estimated tokens, pressure, and cost signal.
+  - Visual UI smoke was completed outside Codex browser-use by using headless Edge against a temporary local verification build, then reverting those verification-only source edits. Confirmed Overview workflow-library / recommended-next-move rendering, and Board rendering for workflow recipes, selected crew strip, linked-worker shell, and `Heavy` trace badge. Keep in mind: Codex browser-use remains blocked on this machine until the `node_repl` runtime reaches `>=22.22.0`.

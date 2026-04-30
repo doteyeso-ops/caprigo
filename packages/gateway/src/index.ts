@@ -88,7 +88,7 @@ app.use(express.json({ limit: '512kb' }));
 const PORT = parseInt(process.env.PORT || '18789', 10);
 const HOST = process.env.CAPRIGO_BIND_HOST?.trim() || '127.0.0.1';
 const API_TOKEN = process.env.CAPRIGO_API_TOKEN?.trim() || '';
-const REQUEST_LOG_ENABLED = (process.env.CAPRIGO_REQUEST_LOG || '1').trim() !== '0';
+const REQUEST_LOG_MODE = (process.env.CAPRIGO_REQUEST_LOG || 'smart').trim().toLowerCase();
 const RATE_LIMIT_WINDOW_MS = Math.max(1_000, parseInt(process.env.CAPRIGO_RATE_LIMIT_WINDOW_MS || '60000', 10) || 60000);
 const RATE_LIMIT_MAX = Math.max(1, parseInt(process.env.CAPRIGO_RATE_LIMIT_MAX || '240', 10) || 240);
 type RuntimeLLMProvider = 'ollama' | 'openai_compatible';
@@ -149,6 +149,25 @@ function requestIp(req: express.Request): string {
   return xff || req.ip || 'unknown';
 }
 
+function isQuietRequest(req: express.Request): boolean {
+  if (req.method !== 'GET') return false;
+  const path = req.path || '';
+  return (
+    path === '/health' ||
+    path === '/readyz' ||
+    path === '/api/runtime' ||
+    path === '/api/sessions' ||
+    path === '/api/system-monitor' ||
+    path.startsWith('/api/orchestration-feed')
+  );
+}
+
+function shouldLogRequest(req: express.Request): boolean {
+  if (REQUEST_LOG_MODE === '0' || REQUEST_LOG_MODE === 'false' || REQUEST_LOG_MODE === 'off') return false;
+  if (REQUEST_LOG_MODE === '1' || REQUEST_LOG_MODE === 'true' || REQUEST_LOG_MODE === 'verbose') return true;
+  return !isQuietRequest(req);
+}
+
 function applyRateLimit(req: express.Request, res: express.Response, next: express.NextFunction) {
   const ip = requestIp(req);
   const key = `${ip}:${req.method}:${req.path}`;
@@ -196,9 +215,10 @@ function requireMutationAuth(req: express.Request, res: express.Response, next: 
 app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
   const startedAt = Date.now();
   const reqId = randomUUID().slice(0, 12);
+  const logThisRequest = shouldLogRequest(req);
   res.setHeader('x-request-id', reqId);
   res.on('finish', () => {
-    if (!REQUEST_LOG_ENABLED) return;
+    if (!logThisRequest) return;
     const payload = {
       ts: new Date().toISOString(),
       reqId,
@@ -746,6 +766,9 @@ app.post('/api/sessions/:id/offline/run', async (req: express.Request, res: expr
       durationMs: Date.now() - started,
       sessionId,
       paramsSummary: JSON.stringify({ args: extraArgs }),
+      rationale: `Run the local script ${entry.name}.`,
+      resultSummary: `exit=${exitCode}${result.error ? ` | error=${result.error}` : ''}`,
+      outputChars: (result.stdout || '').length + (result.stderr || '').length,
     });
     handleAgentActivity({
       type: 'task_end',
@@ -1264,6 +1287,166 @@ app.get('/api/execution-log', (req: express.Request, res: express.Response) => {
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'Failed to read log' });
   }
+});
+
+function summarizeTraceEstimates(entries: Array<{
+  durationMs?: number;
+  outputChars?: number;
+  paramsSummary?: string;
+  rationale?: string;
+  resultSummary?: string;
+}>): {
+  estimatedContextTokens: number;
+  estimatedOutputTokens: number;
+  estimatedTotalTokens: number;
+  pressure: 'light' | 'watch' | 'heavy';
+  costSignal: 'low' | 'watch' | 'high';
+} {
+  const estimateTokens = (chars: number) => Math.max(0, Math.round(chars / 4));
+  const totals = entries.reduce<{
+    durationMs: number;
+    outputChars: number;
+    contextChars: number;
+  }>(
+    (acc, entry) => {
+      acc.durationMs += entry.durationMs || 0;
+      acc.outputChars += entry.outputChars || 0;
+      acc.contextChars += (entry.paramsSummary?.length ?? 0) + (entry.rationale?.length ?? 0) + (entry.resultSummary?.length ?? 0);
+      return acc;
+    },
+    { durationMs: 0, outputChars: 0, contextChars: 0 }
+  );
+  const estimatedContextTokens = estimateTokens(totals.contextChars);
+  const estimatedOutputTokens = estimateTokens(totals.outputChars);
+  const estimatedTotalTokens = estimatedContextTokens + estimatedOutputTokens;
+  const pressure: 'light' | 'watch' | 'heavy' =
+    totals.outputChars > 20000 || totals.durationMs > 45000 || entries.length >= 16
+      ? 'heavy'
+      : totals.outputChars > 8000 || totals.durationMs > 18000 || entries.length >= 8
+        ? 'watch'
+        : 'light';
+  const costSignal: 'low' | 'watch' | 'high' =
+    estimatedTotalTokens > 12000 || totals.durationMs > 45000
+      ? 'high'
+      : estimatedTotalTokens > 5000 || totals.durationMs > 18000
+        ? 'watch'
+        : 'low';
+  return {
+    estimatedContextTokens,
+    estimatedOutputTokens,
+    estimatedTotalTokens,
+    pressure,
+    costSignal,
+  };
+}
+
+app.get('/api/sessions/:id/execution-log', (req: express.Request, res: express.Response) => {
+  const sessionId = req.params.id;
+  if (!agent.getSession(sessionId)) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  const raw = req.query.limit;
+  const limit = Math.min(200, Math.max(1, parseInt(String(raw || '40'), 10) || 40));
+  try {
+    const entries = readExecutionLogTail(500).filter(entry => entry.sessionId === sessionId).slice(-limit);
+    const totals = entries.reduce(
+      (acc, entry) => {
+        acc.count += 1;
+        acc.durationMs += entry.durationMs || 0;
+        acc.outputChars += entry.outputChars || 0;
+        if (!entry.ok) acc.failures += 1;
+        return acc;
+      },
+      { count: 0, failures: 0, durationMs: 0, outputChars: 0 }
+    );
+    const estimates = summarizeTraceEstimates(entries);
+    res.json({ entries, count: entries.length, totals: { ...totals, ...estimates } });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'Failed to read session log' });
+  }
+});
+
+app.get('/api/sessions/:id/execution-log/export', (req: express.Request, res: express.Response) => {
+  const sessionId = req.params.id;
+  const session = agent.getSession(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  const format = String(req.query.format || 'markdown').toLowerCase();
+  const entries = readExecutionLogTail(500).filter(entry => entry.sessionId === sessionId);
+  const totals = entries.reduce(
+    (acc, entry) => {
+      acc.count += 1;
+      acc.durationMs += entry.durationMs || 0;
+      acc.outputChars += entry.outputChars || 0;
+      if (!entry.ok) acc.failures += 1;
+      return acc;
+    },
+    { count: 0, failures: 0, durationMs: 0, outputChars: 0 }
+  );
+  const estimates = summarizeTraceEstimates(entries);
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    session: {
+      id: session.id,
+      displayName: getLaunchedAgent(sessionId)?.displayName || 'Agent',
+      runtimeMode: session.runtimeMode === 'offline' ? 'offline' : 'llm',
+      agentRole: normalizeFleetAssignment(session.agentRole),
+      model: session.model || agent.getConfig().model,
+      description: session.description || '',
+      objective: session.objective || '',
+    },
+    totals: { ...totals, ...estimates },
+    entries,
+  };
+  if (format === 'json') {
+    return res.json(payload);
+  }
+  const lines: string[] = [
+    `# Caprigo Trace Export`,
+    '',
+    `- Exported: ${payload.exportedAt}`,
+    `- Agent: ${payload.session.displayName}`,
+    `- Session ID: ${payload.session.id}`,
+    `- Runtime: ${payload.session.runtimeMode}`,
+    `- Fleet role: ${payload.session.agentRole}`,
+    `- Model: ${payload.session.model}`,
+    `- Tool calls: ${totals.count}`,
+    `- Failures: ${totals.failures}`,
+    `- Total duration (ms): ${totals.durationMs}`,
+    `- Output chars: ${totals.outputChars}`,
+    `- Estimated context tokens: ${estimates.estimatedContextTokens}`,
+    `- Estimated output tokens: ${estimates.estimatedOutputTokens}`,
+    `- Estimated total tokens: ${estimates.estimatedTotalTokens}`,
+    `- Pressure: ${estimates.pressure}`,
+    `- Cost signal: ${estimates.costSignal}`,
+    '',
+  ];
+  if (payload.session.description) {
+    lines.push(`## Description`, '', payload.session.description, '');
+  }
+  if (payload.session.objective) {
+    lines.push(`## Objective`, '', payload.session.objective, '');
+  }
+  lines.push('## Entries', '');
+  if (entries.length === 0) {
+    lines.push('No trace entries recorded for this session yet.', '');
+  } else {
+    entries.forEach((entry, index) => {
+      lines.push(`### ${index + 1}. ${entry.skill}`);
+      lines.push(`- Time: ${new Date(entry.ts).toISOString()}`);
+      lines.push(`- Status: ${entry.ok ? 'ok' : 'error'}`);
+      lines.push(`- Duration: ${entry.durationMs} ms`);
+      if (typeof entry.outputChars === 'number') lines.push(`- Output chars: ${entry.outputChars}`);
+      if (entry.rationale) lines.push(`- Why: ${entry.rationale}`);
+      if (entry.resultSummary) lines.push(`- Result: ${entry.resultSummary}`);
+      if (entry.paramsSummary) lines.push(`- Params: ${entry.paramsSummary}`);
+      if (entry.error) lines.push(`- Error: ${entry.error}`);
+      lines.push('');
+    });
+  }
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.send(lines.join('\n'));
 });
 
 /** Re-scan skills directory and register (handles cwd changes and new files without restart). */

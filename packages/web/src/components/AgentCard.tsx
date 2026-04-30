@@ -48,6 +48,8 @@ interface Props {
   localNameById: Record<string, string>;
   selected: boolean;
   onSelect: () => void;
+  onOpenBoard: () => void;
+  onOpenSession: () => void;
   onRename: () => void;
   onEdit: () => void;
   onClose: () => void;
@@ -60,6 +62,8 @@ export function AgentCard({
   localNameById,
   selected,
   onSelect,
+  onOpenBoard,
+  onOpenSession,
   onRename,
   onEdit,
   onClose,
@@ -78,6 +82,8 @@ export function AgentCard({
   const skillLabel = skillN === 0 ? 'All skills' : `${skillN} skill${skillN === 1 ? '' : 's'}`;
   const objectiveText = a.objective?.trim();
   const stateSummary = summarizeAgentState(a, localNameById);
+  const canOpenSession = mode === 'llm';
+  const handoffLabel = canOpenSession ? 'Open session' : 'Open board';
 
   useEffect(() => {
     if (!menu) return;
@@ -189,6 +195,41 @@ export function AgentCard({
         <div className="rb-agent-card__activity-label">Activity</div>
         <div className="rb-agent-card__activity-body">
           <p className="rb-agent-card__summary">{stateSummary}</p>
+          <div className="rb-agent-card__handoff">
+            <button
+              type="button"
+              className="rb-btn rb-btn--accent rb-agent-card__handoff-btn"
+              onClick={e => {
+                e.stopPropagation();
+                if (canOpenSession) onOpenSession();
+                else onOpenBoard();
+              }}
+            >
+              {handoffLabel}
+            </button>
+            <button
+              type="button"
+              className="rb-icon-btn rb-agent-card__handoff-secondary"
+              onClick={e => {
+                e.stopPropagation();
+                onDetails();
+              }}
+            >
+              Details
+            </button>
+            {canOpenSession && (
+              <button
+                type="button"
+                className="rb-icon-btn rb-agent-card__handoff-secondary"
+                onClick={e => {
+                  e.stopPropagation();
+                  onOpenBoard();
+                }}
+              >
+                Board
+              </button>
+            )}
+          </div>
           {idleHint && (
             <p className="rb-agent-card__idle">
               {mode === 'llm' ? (
@@ -228,6 +269,17 @@ export function AgentCard({
           onClick={e => e.stopPropagation()}
           role="menu"
         >
+          <button
+            type="button"
+            className="rb-ow-ctx__item"
+            onClick={() => {
+              setMenu(null);
+              if (canOpenSession) onOpenSession();
+              else onOpenBoard();
+            }}
+          >
+            {handoffLabel}
+          </button>
           <button
             type="button"
             className="rb-ow-ctx__item"

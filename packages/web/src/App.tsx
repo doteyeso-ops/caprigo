@@ -8,8 +8,11 @@ import { AgentDetailsDialog, AgentSkillsDialog } from './components/AgentSession
 import { AgentBuilderDialog } from './components/AgentBuilderDialog';
 import { SystemMonitorWidget } from './components/SystemMonitorWidget';
 import { DashboardHero } from './components/DashboardHero';
+import { WorkflowLauncherDialog } from './components/WorkflowLauncherDialog';
+import type { WorkflowTemplateId } from './components/workflows';
 import type {
   AgentCardModel,
+  ExecutionTraceEntry,
   HealthPayload,
   LocalScriptItem,
   RuntimePayload,
@@ -45,6 +48,20 @@ async function fetchSessions(): Promise<AgentCardModel[]> {
   return (d.sessions || []) as AgentCardModel[];
 }
 
+type WorkspaceNoticeTone = 'info' | 'success';
+type WorkspaceNotice = {
+  title: string;
+  detail: string;
+  tone: WorkspaceNoticeTone;
+  checklist?: string[];
+  primaryAction?: {
+    label: string;
+    agentId: string;
+    runtimeMode: 'llm' | 'offline';
+    draft?: string;
+  };
+};
+
 export default function App() {
   const [agents, setAgents] = useState<AgentCardModel[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -75,6 +92,9 @@ export default function App() {
     }
   });
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [workspaceNotice, setWorkspaceNotice] = useState<WorkspaceNotice | null>(null);
+  const [workflowLauncherOpen, setWorkflowLauncherOpen] = useState(false);
+  const [executionTraceTail, setExecutionTraceTail] = useState<ExecutionTraceEntry[]>([]);
   /** Bumps when opening Chat from Workspace so the compose box can auto-focus. */
   const [chatFocusSerial, setChatFocusSerial] = useState(0);
   const selectedIdRef = useRef<string | null>(null);
@@ -218,6 +238,220 @@ export default function App() {
     [loadAgents]
   );
 
+  const createSessionRaw = useCallback(async (body: Record<string, unknown>) => {
+    const r = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`;
+      try {
+        const j = (await r.json()) as { error?: string };
+        if (j?.error) msg = j.error;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(msg);
+    }
+    return (await r.json()) as { id: string };
+  }, []);
+
+  const launchCrew = useCallback(
+    async (templateId: WorkflowTemplateId, options?: { recipeName?: string; leadInstructionsMarkdown?: string }) => {
+      try {
+        const leadInstructionsMarkdown = options?.leadInstructionsMarkdown?.trim();
+        const leadInstructionPatch = leadInstructionsMarkdown ? { agentInstructionsMarkdown: leadInstructionsMarkdown } : {};
+        if (templateId === 'repo-coding') {
+          const orchestrator = await createSessionRaw({
+            displayName: 'Repo Crew Lead',
+            description: 'Coordinates repository implementation work across linked agents.',
+            objective: 'Break the repo task into focused assignments, track progress, and keep the user updated on blockers and completion.',
+            runtimeMode: 'llm',
+            agentRole: 'orchestrator',
+            ...leadInstructionPatch,
+          });
+          const scout = await createSessionRaw({
+            displayName: 'Repo Scout',
+            description: 'Finds the right files, symbols, and code paths before implementation.',
+            objective: 'Use repo-aware context tools to identify the 1-3 most relevant files, key symbols, and likely edit points for each assigned code task.',
+            runtimeMode: 'llm',
+            agentRole: 'agent',
+            linkedOrchestratorId: orchestrator.id,
+          });
+          await createSessionRaw({
+            displayName: 'Code Operator',
+            description: 'Implements changes in the selected files and verifies the result.',
+            objective: 'Make the requested code change end-to-end, verify it with the smallest reliable check, and report changed files or blockers clearly.',
+            runtimeMode: 'llm',
+            agentRole: 'agent',
+            linkedOrchestratorId: orchestrator.id,
+          });
+          setSelectedId(orchestrator.id);
+          setWorkspaceNotice({
+            title: options?.recipeName ? `${options.recipeName} launched` : 'Repo Crew launched',
+            detail: 'Repo Crew Lead, Repo Scout, and Code Operator are linked and ready. Start with the lead, not a worker.',
+            tone: 'success',
+            checklist: [
+              'Open Repo Crew Lead in Session and paste the concrete bug, feature, or PR outcome.',
+              'Let Repo Scout narrow the file set before Code Operator edits.',
+              'Use Board only when you need to relink roles, switch runtimes, or run local scripts.',
+            ],
+            primaryAction: {
+              label: 'Open lead session',
+              agentId: orchestrator.id,
+              runtimeMode: 'llm',
+              draft:
+                'User goal:\n\nContext / constraints:\n\nAsk Repo Scout to identify the most relevant files first, then ask Code Operator to make the smallest complete change and verify it.',
+            },
+          });
+        } else if (templateId === 'offline-automation') {
+          const orchestrator = await createSessionRaw({
+            displayName: 'Automation Lead',
+            description: 'Coordinates local automation runs and follow-up analysis.',
+            objective: 'Choose the right local workflow, coordinate runs, and summarize outcomes, failures, and next actions for the user.',
+            runtimeMode: 'llm',
+            agentRole: 'orchestrator',
+            ...leadInstructionPatch,
+          });
+          await createSessionRaw({
+            displayName: 'Local Script Runner',
+            description: 'Runs offline scripts and captures raw local output.',
+            objective: 'Run the assigned local script, capture stdout/stderr clearly, and surface failures without inventing missing results.',
+            runtimeMode: 'offline',
+            agentRole: 'agent',
+            linkedOrchestratorId: orchestrator.id,
+            ...(localScripts[0]
+              ? {
+                  primaryOfflineScriptId: localScripts[0].id,
+                  assignedOfflineScripts: [localScripts[0].id],
+                }
+              : {}),
+          });
+          const reporter = await createSessionRaw({
+            displayName: 'Ops Reporter',
+            description: 'Explains run results and recommends the next local action.',
+            objective: 'Turn script output into a concise operator summary with failures, likely cause, and the next safest action.',
+            runtimeMode: 'llm',
+            agentRole: 'agent',
+            linkedOrchestratorId: orchestrator.id,
+          });
+          setSelectedId(orchestrator.id);
+          setWorkspaceNotice({
+            title: options?.recipeName ? `${options.recipeName} launched` : 'Automation Crew launched',
+            detail: 'Automation Lead, Local Script Runner, and Ops Reporter are linked and ready. Start by framing the run through the lead.',
+            tone: 'success',
+            checklist: [
+              'Open Automation Lead in Session and describe the local task or system check you want run.',
+              localScripts[0]
+                ? `Confirm or change the Local Script Runner default script before execution.`
+                : 'Assign a script to Local Script Runner on the Board before the first run.',
+              'Use Ops Reporter after the run to turn raw output into a clear operator summary.',
+            ],
+            primaryAction: {
+              label: 'Open lead session',
+              agentId: orchestrator.id,
+              runtimeMode: 'llm',
+              draft:
+                'Local task to run:\n\nWhat success looks like:\n\nConstraints / safety notes:\n\nHave Local Script Runner execute the right script, then ask Ops Reporter to summarize the result and next action.',
+            },
+          });
+        } else if (templateId === 'launch-audit') {
+          const orchestrator = await createSessionRaw({
+            displayName: 'Launch Audit Lead',
+            description: 'Coordinates a ship-readiness pass across product surface, risks, and operator clarity.',
+            objective: 'Run a practical launch audit, assign focused checks, and return the highest-priority blockers, risks, and recommended fixes before release.',
+            runtimeMode: 'llm',
+            agentRole: 'orchestrator',
+            ...leadInstructionPatch,
+          });
+          await createSessionRaw({
+            displayName: 'Surface Checker',
+            description: 'Inspects UI, setup flow, and visible product rough edges from the user perspective.',
+            objective: 'Check the main user flow, visible UI copy, setup readiness, and first-use clarity. Report friction, confusion, or inconsistent behavior with concrete examples.',
+            runtimeMode: 'llm',
+            agentRole: 'agent',
+            linkedOrchestratorId: orchestrator.id,
+          });
+          await createSessionRaw({
+            displayName: 'Risk Reviewer',
+            description: 'Looks for trust, launch, and operational risks before release.',
+            objective: 'Identify the most important launch blockers, trust gaps, missing docs/tests, and operational risks. Prioritize by real user impact and suggest the shortest fix path.',
+            runtimeMode: 'llm',
+            agentRole: 'agent',
+            linkedOrchestratorId: orchestrator.id,
+          });
+          setSelectedId(orchestrator.id);
+          setWorkspaceNotice({
+            title: options?.recipeName ? `${options.recipeName} launched` : 'Launch Audit Crew launched',
+            detail: 'Launch Audit Lead, Surface Checker, and Risk Reviewer are linked and ready. Start with the lead and define the release target clearly.',
+            tone: 'success',
+            checklist: [
+              'Open Launch Audit Lead in Session and describe what is about to ship: feature, beta, or release candidate.',
+              'Ask Surface Checker to inspect setup, core UI flow, and first-use friction before polishing visuals.',
+              'Ask Risk Reviewer to rank blockers, trust gaps, and missing readiness steps by launch impact.',
+            ],
+            primaryAction: {
+              label: 'Open lead session',
+              agentId: orchestrator.id,
+              runtimeMode: 'llm',
+              draft:
+                'What is shipping:\n\nWho this is for:\n\nKnown risks or weak spots:\n\nAsk Surface Checker to inspect the visible user journey and ask Risk Reviewer to rank the top blockers before release.',
+            },
+          });
+        } else {
+          const orchestrator = await createSessionRaw({
+            displayName: 'PR Review Lead',
+            description: 'Coordinates a focused code review across changed files, risk areas, and final findings.',
+            objective: 'Review the proposed change like a serious reviewer: identify behavioral regressions, missing tests, risky assumptions, and the highest-priority issues before merge.',
+            runtimeMode: 'llm',
+            agentRole: 'orchestrator',
+            ...leadInstructionPatch,
+          });
+          await createSessionRaw({
+            displayName: 'Diff Scout',
+            description: 'Finds the changed files, relevant code paths, and hotspots worth deeper review.',
+            objective: 'Use repo-aware context and file search to identify the actual change surface, affected files, and the most likely regression hotspots before detailed review.',
+            runtimeMode: 'llm',
+            agentRole: 'agent',
+            linkedOrchestratorId: orchestrator.id,
+          });
+          await createSessionRaw({
+            displayName: 'Risk Reviewer',
+            description: 'Looks for bugs, regressions, and missing verification in the reviewed change.',
+            objective: 'Review the change for correctness, regressions, edge cases, and missing tests. Return findings first, ordered by severity, with concrete file-level references when possible.',
+            runtimeMode: 'llm',
+            agentRole: 'agent',
+            linkedOrchestratorId: orchestrator.id,
+          });
+          setSelectedId(orchestrator.id);
+          setWorkspaceNotice({
+            title: options?.recipeName ? `${options.recipeName} launched` : 'PR Review Crew launched',
+            detail: 'PR Review Lead, Diff Scout, and Risk Reviewer are linked and ready. Start with the review target and expected merge context.',
+            tone: 'success',
+            checklist: [
+              'Open PR Review Lead in Session and describe the change under review: branch, patch, local diff, or PR goal.',
+              'Ask Diff Scout to identify the changed files and the likely risk surface before detailed review.',
+              'Ask Risk Reviewer to return findings first, prioritized by severity, with missing tests or regression risks called out clearly.',
+            ],
+            primaryAction: {
+              label: 'Open lead session',
+              agentId: orchestrator.id,
+              runtimeMode: 'llm',
+              draft:
+                'Review target:\n\nExpected behavior after merge:\n\nKnown sensitive areas:\n\nAsk Diff Scout to identify the real change surface first, then ask Risk Reviewer for prioritized findings and missing-test risks.',
+            },
+          });
+        }
+        await loadAgents();
+        setActiveTab('workspace');
+      } catch (e) {
+        window.alert(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [createSessionRaw, loadAgents, localScripts]
+  );
+
   const consumeDetailsTaskFocus = useCallback(() => setDetailsTaskFocus(false), []);
 
   const builderAgent = useMemo(
@@ -262,16 +496,71 @@ export default function App() {
   }, [selectedId, loadMessages]);
 
   useEffect(() => {
-    const t = window.setInterval(() => loadAgents(), 800);
-    return () => clearInterval(t);
-  }, [loadAgents]);
+    if (!workspaceNotice) return;
+    const timer = window.setTimeout(() => setWorkspaceNotice(null), 9000);
+    return () => window.clearTimeout(timer);
+  }, [workspaceNotice]);
 
   useEffect(() => {
-    const t = window.setInterval(() => {
-      void refreshStatus();
-    }, 5000);
-    return () => clearInterval(t);
-  }, [refreshStatus]);
+    let cancelled = false;
+    let timer: number | null = null;
+    const tick = async () => {
+      if (cancelled) return;
+      await loadAgents();
+      if (cancelled) return;
+      const visible = document.visibilityState === 'visible';
+      const active = activeTab === 'workspace' || activeTab === 'chat' || !!detailsAgentId || !!skillsAgentId;
+      const nextMs = visible ? (active ? 5000 : 12000) : 30000;
+      timer = window.setTimeout(() => void tick(), nextMs);
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [loadAgents, activeTab, detailsAgentId, skillsAgentId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | null = null;
+    const tick = async () => {
+      if (cancelled) return;
+      await refreshStatus();
+      if (cancelled) return;
+      const visible = document.visibilityState === 'visible';
+      const nextMs = visible ? (monitorDocked || activeTab === 'settings' ? 10000 : 20000) : 40000;
+      timer = window.setTimeout(() => void tick(), nextMs);
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [refreshStatus, activeTab, monitorDocked]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | null = null;
+    const tick = async () => {
+      try {
+        const r = await fetch('/api/execution-log?limit=240');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = (await r.json()) as { entries?: ExecutionTraceEntry[] };
+        if (!cancelled) setExecutionTraceTail(d.entries || []);
+      } catch {
+        if (!cancelled) setExecutionTraceTail([]);
+      }
+      if (!cancelled) {
+        const visible = document.visibilityState === 'visible';
+        timer = window.setTimeout(() => void tick(), visible ? 12000 : 30000);
+      }
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     if (detailsAgentId && !agents.some(a => a.id === detailsAgentId)) setDetailsAgentId(null);
@@ -376,6 +665,23 @@ export default function App() {
         : true;
 
   const tabClass = (t: typeof activeTab) => (activeTab === t ? ' rb-tab--active' : '');
+  const openBoardForAgent = useCallback(
+    (id: string) => {
+      setSelectedId(id);
+      setActiveTab('workspace');
+    },
+    []
+  );
+  const openSessionForAgent = useCallback(
+    (id: string, draft?: string) => {
+      setSelectedId(id);
+      if (draft !== undefined) setInput(draft);
+      setActiveTab('chat');
+      void loadMessages(id);
+      setChatFocusSerial(s => s + 1);
+    },
+    [loadMessages]
+  );
 
   return (
     <div className={`rb-app${monitorDocked ? ' rb-app--monitor-dock' : ''}`}>
@@ -448,7 +754,18 @@ export default function App() {
             onCreateAgent={() => setBuilder({ open: true, editId: null })}
           />
           <div className="rb-dashboard">
-            <ConfigPanel health={health} runtime={runtime} skills={skills} agentCount={agents.length} onReloadSkills={reloadSkills} />
+            <ConfigPanel
+              health={health}
+              runtime={runtime}
+              skills={skills}
+              agents={agents}
+              agentCount={agents.length}
+              onOpenSettings={() => setActiveTab('settings')}
+              onOpenBuilder={() => setBuilder({ open: true, editId: null })}
+              onOpenWorkflowLibrary={() => setWorkflowLauncherOpen(true)}
+              onLaunchCrew={launchCrew}
+              onReloadSkills={reloadSkills}
+            />
 
             <AgentFleet
               agents={agents}
@@ -458,6 +775,8 @@ export default function App() {
                 setSelectedId(id);
                 loadMessages(id);
               }}
+              onOpenBoard={openBoardForAgent}
+              onOpenSession={openSessionForAgent}
               onClose={closeAgent}
               onRename={renameAgent}
               onOpenBuilder={() => setBuilder({ open: true, editId: null })}
@@ -476,6 +795,8 @@ export default function App() {
         <DeskPanel
           agents={agents}
           selectedId={selectedId}
+          traceEntries={executionTraceTail}
+          workspaceNotice={workspaceNotice}
           localScripts={localScripts}
           scriptsDir={localScriptsDir}
           offlineRunningId={offlineRunningId}
@@ -486,6 +807,7 @@ export default function App() {
             loadMessages(id);
           }}
           onOpenBuilder={() => setBuilder({ open: true, editId: null })}
+          onOpenWorkflowLibrary={() => setWorkflowLauncherOpen(true)}
           onEditAgent={id => setBuilder({ open: true, editId: id })}
           onRefreshAgents={loadAgents}
           onCloseAgent={closeAgent}
@@ -499,12 +821,13 @@ export default function App() {
             setDetailsTaskFocus(true);
           }}
           onAgentSkills={setSkillsAgentId}
-          onPlayAgent={(id, mode) => {
+          onPlayAgent={(id, mode, draft) => {
             setSelectedId(id);
             if (mode === 'offline') {
               setActiveTab('workspace');
               return;
             }
+            if (draft !== undefined) setInput(draft);
             setActiveTab('chat');
             void loadMessages(id);
             setChatFocusSerial(s => s + 1);
@@ -527,6 +850,13 @@ export default function App() {
           onLinkWorkerToOrchestrator={async (workerId, orchestratorId) => {
             await patchSession(workerId, { linkedOrchestratorId: orchestratorId });
           }}
+          onSetAgentRole={async (sessionId, role) => {
+            await patchSession(sessionId, {
+              agentRole: role,
+              linkedOrchestratorId: role === 'orchestrator' ? null : undefined,
+            });
+          }}
+          onLaunchCrew={launchCrew}
           engineModel={runtime?.engine.model ?? ''}
           llmProvider={health?.llm?.provider}
           ollamaModels={ollamaModels}
@@ -542,9 +872,15 @@ export default function App() {
           <WorkspacePanel
             agents={agents}
             selected={selectedAgent}
+            traceEntries={selectedAgent ? executionTraceTail.filter(entry => entry.sessionId === selectedAgent.id).slice(-24) : []}
             onSelectAgent={id => {
               setSelectedId(id);
               loadMessages(id);
+            }}
+            onOpenBoard={openBoardForAgent}
+            onAgentDetails={id => {
+              setDetailsAgentId(id);
+              setDetailsTaskFocus(false);
             }}
             messages={messages}
             loading={loading}
@@ -641,6 +977,11 @@ export default function App() {
           onCreated={() => setActiveTab('workspace')}
         />
       )}
+      <WorkflowLauncherDialog
+        open={workflowLauncherOpen}
+        onClose={() => setWorkflowLauncherOpen(false)}
+        onLaunch={templateId => void launchCrew(templateId)}
+      />
       {monitorDocked && (
         <aside className="rb-monitor-dock" aria-label="System monitor">
           <header className="rb-monitor-dock__head">
@@ -650,7 +991,7 @@ export default function App() {
             </button>
           </header>
           <div className="rb-monitor-dock__body">
-            <SystemMonitorWidget layout="docked" pollMs={2500} />
+            <SystemMonitorWidget layout="docked" pollMs={10000} />
           </div>
         </aside>
       )}

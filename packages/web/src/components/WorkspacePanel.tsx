@@ -1,5 +1,7 @@
-import React, { useRef, useEffect, useState } from 'react';
-import type { AgentCardModel } from '../types';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
+import type { AgentCardModel, ExecutionTraceEntry } from '../types';
+import { inferWorkflowContext } from './workflows';
+import { estimateTracePressure } from './traceHeuristics';
 
 interface ThreadMessage {
   role: 'user' | 'assistant' | 'offline' | 'orchestration';
@@ -22,7 +24,10 @@ interface ThreadMessage {
 interface Props {
   agents: AgentCardModel[];
   selected: AgentCardModel | null;
+  traceEntries: ExecutionTraceEntry[];
   onSelectAgent: (id: string) => void;
+  onOpenBoard?: (id: string) => void;
+  onAgentDetails?: (id: string) => void;
   messages: ThreadMessage[];
   loading: boolean;
   input: string;
@@ -35,7 +40,10 @@ interface Props {
 export function WorkspacePanel({
   agents,
   selected,
+  traceEntries,
   onSelectAgent,
+  onOpenBoard,
+  onAgentDetails,
   messages,
   loading,
   input,
@@ -47,6 +55,8 @@ export function WorkspacePanel({
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [thinkElapsedSec, setThinkElapsedSec] = useState(0);
+  const workflowContext = useMemo(() => inferWorkflowContext(selected, agents), [selected, agents]);
+  const tracePressure = useMemo(() => estimateTracePressure(traceEntries), [traceEntries]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -115,6 +125,49 @@ export function WorkspacePanel({
           </p>
         ) : (
           <p className="rb-workspace__sub rb-muted">Create an agent from Overview, then open its Session here.</p>
+        )}
+        {workflowContext && (
+          <div className="rb-workspace__workflow">
+            <span className="rb-workspace__workflow-label">{workflowContext.workflow.title}</span>
+            <span className="rb-workspace__workflow-copy">
+              {workflowContext.workflow.blurb}
+              {' '}
+              {workflowContext.selectedIsLead
+                ? 'This session is the workflow lead.'
+                : `This session is part of ${workflowContext.lead.displayName}.`}
+            </span>
+          </div>
+        )}
+        {tracePressure && (tracePressure.pressure === 'heavy' || tracePressure.costSignal === 'high') && (
+          <div className="rb-workspace__warning">
+            <strong>Heavy session warning.</strong> Recent tool activity suggests this agent is carrying high context or cost pressure. Consider narrowing the task, reducing file/tool scope, or starting a fresh workflow step.
+          </div>
+        )}
+        {selected && (
+          <div className="rb-workspace__actions">
+            <button
+              type="button"
+              className="rb-icon-btn"
+              onClick={() => onOpenBoard?.(selected.id)}
+            >
+              Open board
+            </button>
+            <button
+              type="button"
+              className="rb-icon-btn"
+              onClick={() => onAgentDetails?.(selected.id)}
+            >
+              Agent details
+            </button>
+            {!offlineOnly && selected.linkedOrchestratorId && (
+              <span className="rb-workspace__crew-note">
+                Reporting to crew lead {selected.linkedOrchestratorId.slice(0, 8)}...
+              </span>
+            )}
+            {!offlineOnly && selected.agentRole === 'orchestrator' && (
+              <span className="rb-workspace__crew-note">Crew lead: coordinate workers from Board, then continue chat here.</span>
+            )}
+          </div>
         )}
       </div>
 

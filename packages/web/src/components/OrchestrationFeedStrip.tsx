@@ -13,7 +13,7 @@ interface Props {
   pollMs?: number;
 }
 
-export function OrchestrationFeedStrip({ pollMs = 1500 }: Props) {
+export function OrchestrationFeedStrip({ pollMs = 4000 }: Props) {
   const [entries, setEntries] = useState<FeedEntry[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
@@ -33,11 +33,17 @@ export function OrchestrationFeedStrip({ pollMs = 1500 }: Props) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
       }
     };
-    void load();
-    const id = window.setInterval(load, pollMs);
+    let timer: number | null = null;
+    const tick = async () => {
+      await load();
+      if (cancelled) return;
+      const nextMs = document.visibilityState === 'visible' ? pollMs : pollMs * 4;
+      timer = window.setTimeout(() => void tick(), nextMs);
+    };
+    void tick();
     return () => {
       cancelled = true;
-      clearInterval(id);
+      if (timer !== null) window.clearTimeout(timer);
     };
   }, [pollMs]);
 

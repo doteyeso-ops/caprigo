@@ -1,5 +1,5 @@
 /**
- * Terminal styling — Hermes-like polish without extra dependencies.
+ * Terminal styling with lightweight polish and no extra dependencies.
  * Honors NO_COLOR / FORCE_COLOR.
  */
 
@@ -48,6 +48,10 @@ export function dim(s: string): string {
   return `${C.dim}${s}${C.reset}`;
 }
 
+export function accent(s: string): string {
+  return `${C.magenta}${s}${C.reset}`;
+}
+
 export function titleLine(text: string): string {
   return `${C.bold}${C.cyan}${text}${C.reset}`;
 }
@@ -68,10 +72,10 @@ export function muted(s: string): string {
   return `${C.gray}${s}${C.reset}`;
 }
 
-/** Fixed-width truncate with ellipsis */
 export function trunc(s: string, max: number): string {
   if (s.length <= max) return s;
-  return s.slice(0, Math.max(0, max - 1)) + '…';
+  if (max <= 3) return s.slice(0, max);
+  return s.slice(0, max - 3) + '...';
 }
 
 export function termWidth(): number {
@@ -79,36 +83,28 @@ export function termWidth(): number {
   return typeof w === 'number' && w > 40 ? w : 80;
 }
 
-/**
- * Framed section — Hermes-style panel (UTF-8 box drawing).
- * `W` is total width including corners; text fits in `W - 4` (side borders + padding).
- */
 export function framedSection(title: string, lines: string[]): string {
-  const W = Math.min(74, Math.max(54, termWidth() - 2));
-  const textW = W - 4;
+  const width = Math.min(74, Math.max(54, termWidth() - 2));
+  const textWidth = width - 4;
   const h = (n: number) => '─'.repeat(n);
-  const top = `╭${h(W - 2)}╮`;
+  const top = `╭${h(width - 2)}╮`;
   const titleRow = (() => {
-    const t = bold(trunc(title, textW));
-    return `│ ${t}${' '.repeat(Math.max(0, textW - visibleLen(t)))} │`;
+    const t = bold(trunc(title, textWidth));
+    return `│ ${t}${' '.repeat(Math.max(0, textWidth - visibleLen(t)))} │`;
   })();
-  const sep = `├${h(W - 2)}┤`;
-  const body = lines.map(s => {
-    const t = trunc(s, textW);
-    return `│ ${t}${' '.repeat(Math.max(0, textW - visibleLen(t)))} │`;
+  const sep = `├${h(width - 2)}┤`;
+  const body = lines.map(line => {
+    const t = trunc(line, textWidth);
+    return `│ ${t}${' '.repeat(Math.max(0, textWidth - visibleLen(t)))} │`;
   });
-  const bot = `╰${h(W - 2)}╯`;
-  return [top, titleRow, sep, ...body, bot].join('\n');
+  const bottom = `╰${h(width - 2)}╯`;
+  return [top, titleRow, sep, ...body, bottom].join('\n');
 }
 
-/** Rough visible length without ANSI (for padding). */
 function visibleLen(s: string): number {
   return s.replace(/\x1b\[[0-9;]*m/g, '').length;
 }
 
-/**
- * Simple aligned columns: last column gets remaining space for descriptions.
- */
 export function table(headers: string[], widths: number[], rows: string[][]): string {
   const pad = (s: string, n: number) => {
     const v = trunc(s.replace(/\n/g, ' '), n);
@@ -118,4 +114,24 @@ export function table(headers: string[], widths: number[], rows: string[][]): st
   const sep = widths.map(n => '─'.repeat(n)).join('  ');
   const body = rows.map(r => r.map((cell, i) => pad(cell, widths[i])).join('  ')).join('\n');
   return [bold(head), dim(sep), body].join('\n');
+}
+
+export function brandHeader(product: string, tagline: string, detail?: string): string {
+  const width = Math.min(74, Math.max(54, termWidth() - 2));
+  const h = (n: number) => '═'.repeat(n);
+  const center = (text: string, formatter: (value: string) => string) => {
+    const visible = visibleLen(text);
+    const left = Math.max(0, Math.floor((width - 2 - visible) / 2));
+    const right = Math.max(0, width - 2 - visible - left);
+    return `${C.cyan}║${C.reset}${' '.repeat(left)}${formatter(text)}${' '.repeat(right)}${C.cyan}║${C.reset}`;
+  };
+
+  const rows = [
+    `${C.cyan}╔${h(width - 2)}╗${C.reset}`,
+    center(product, value => bold(accent(value))),
+    center(tagline, value => dim(value)),
+  ];
+  if (detail) rows.push(center(detail, value => muted(value)));
+  rows.push(`${C.cyan}╚${h(width - 2)}╝${C.reset}`);
+  return rows.join('\n');
 }

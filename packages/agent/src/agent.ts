@@ -30,8 +30,19 @@ function truncate(s: string, max: number): string {
   return s.slice(0, max) + '\n… (truncated)';
 }
 
-const AGENT_INSTRUCTIONS_MAX_CHARS = 200_000;
-const AGENT_INLINE_INSTRUCTIONS_MAX_CHARS = 100_000;
+function envInt(name: string, fallback: number, min: number, max: number): number {
+  const raw = caprigoEnv(name);
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+const AGENT_INSTRUCTIONS_MAX_CHARS = envInt('AGENT_INSTRUCTIONS_MAX_CHARS', 24_000, 1_000, 200_000);
+const AGENT_INLINE_INSTRUCTIONS_MAX_CHARS = envInt('INLINE_INSTRUCTIONS_MAX_CHARS', 12_000, 500, 100_000);
+const GLOBAL_PROGRAM_GUIDE_MAX_CHARS = envInt('PROGRAM_GUIDE_MAX_CHARS', 16_000, 1_000, 200_000);
+const HISTORY_RECENT_MESSAGES = envInt('HISTORY_RECENT_MESSAGES', 12, 4, 40);
+const HISTORY_SUMMARY_MAX_CHARS = envInt('HISTORY_SUMMARY_MAX_CHARS', 6_000, 500, 40_000);
+const TOOL_RESULT_MAX_CHARS = envInt('TOOL_RESULT_MAX_CHARS', 4_000, 300, 100_000);
 const GLOBAL_PROGRAM_GUIDE_DEFAULT_PATH = 'CAPRIGO_LLM_GUIDE.md';
 
 export class Agent {
@@ -383,8 +394,8 @@ Could not read \`${rel}\`: ${hit.error}`;
     try {
       const raw = fs.readFileSync(abs, 'utf8');
       const text =
-        raw.length > AGENT_INSTRUCTIONS_MAX_CHARS
-            ? raw.slice(0, AGENT_INSTRUCTIONS_MAX_CHARS) + '\n... (truncated)'
+        raw.length > GLOBAL_PROGRAM_GUIDE_MAX_CHARS
+            ? raw.slice(0, GLOBAL_PROGRAM_GUIDE_MAX_CHARS) + '\n... (truncated)'
             : raw;
       this.globalProgramGuideCache = { abs, mtimeMs: st.mtimeMs, text };
       return this.formatGlobalProgramGuideOk(rel, text);
@@ -407,15 +418,86 @@ Before acting, read and follow this Caprigo product/usage guide from **${relPath
 ${text}`;
   }
 
+  private conversationLineForPrompt(m: Message): string | null {
+    if (m.role === 'user') {
+      return `- User: ${truncate(m.content.replace(/\s+/g, ' ').trim(), 240)}`;
+    }
+    if (m.role === 'assistant') {
+      return `- Assistant: ${truncate(m.content.replace(/\s+/g, ' ').trim(), 240)}`;
+    }
+    if (m.role === 'orchestration' && m.orchestration) {
+      const om = m.orchestration;
+      const peer = om.peerLabel || `${om.peerSessionId.slice(0, 8)}...`;
+      const dir = om.channel === 'out' ? 'to' : 'from';
+      return `- Fleet ${om.kind} ${dir} ${peer}: ${truncate(m.content.replace(/\s+/g, ' ').trim(), 220)}`;
+    }
+    return null;
+  }
+
+  private buildCompactedHistoryBlock(messages: Message[]): string {
+    const lines: string[] = [];
+    let used = 0;
+    for (const m of messages) {
+      const line = this.conversationLineForPrompt(m);
+      if (!line) continue;
+      const next = used === 0 ? line.length : used + 1 + line.length;
+      if (next > HISTORY_SUMMARY_MAX_CHARS) break;
+      lines.push(line);
+      used = next;
+    }
+    if (!lines.length) return '';
+    return `Earlier conversation digest (${messages.length} older messages compressed). Use this as background only; the recent turns below are more important.\n${lines.join('\n')}`;
+  }
+
+  private buildPromptHistory(session: Session): UnifiedChatMessage[] {
+    const llmHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    for (const m of session.messages) {
+      if (m.role === 'user' || m.role === 'assistant') {
+        llmHistory.push({ role: m.role, content: m.content });
+      } else if (m.role === 'orchestration' && m.orchestration) {
+        const om = m.orchestration;
+        const peer = om.peerLabel || `${om.peerSessionId.slice(0, 8)}...`;
+        const dir = om.channel === 'out' ? '->' : '<-';
+        llmHistory.push({
+          role: 'user',
+          content: `[Fleet ${dir} ${peer} · ${om.kind}]\n${m.content}`,
+        });
+      }
+    }
+
+    if (llmHistory.length <= HISTORY_RECENT_MESSAGES) {
+      return llmHistory.map(
+        (m): UnifiedChatMessage => ({ role: m.role as 'user' | 'assistant', content: m.content })
+      );
+    }
+
+    const recentHistory = llmHistory.slice(-HISTORY_RECENT_MESSAGES).map(
+      (m): UnifiedChatMessage => ({ role: m.role as 'user' | 'assistant', content: m.content })
+    );
+    const olderCount = Math.max(0, session.messages.length - HISTORY_RECENT_MESSAGES);
+    const digest = this.buildCompactedHistoryBlock(session.messages.slice(0, olderCount));
+    return digest ? [{ role: 'system', content: digest }, ...recentHistory] : recentHistory;
+  }
+
+  private formatToolResultForPrompt(result: unknown): string {
+    const raw = typeof result === 'string' ? result : JSON.stringify(result);
+    if (!raw) return '';
+    return truncate(raw, TOOL_RESULT_MAX_CHARS);
+  }
+
   private loadInlineInstructionsBlock(session: Session): string {
     const raw = session.agentInstructionsMarkdown?.trim();
     if (!raw) return '';
+    const text =
+      raw.length > AGENT_INLINE_INSTRUCTIONS_MAX_CHARS
+        ? raw.slice(0, AGENT_INLINE_INSTRUCTIONS_MAX_CHARS) + '\n... (truncated)'
+        : raw;
     return `
 
 ## Task instructions (inline markdown)
 Follow these for this session unless they conflict with safety or system policies.
 
-${raw}`;
+${text}`;
   }
 
   /**
@@ -757,9 +839,7 @@ If you need no tool, respond normally. Use PARAMS: {} for tools with no paramete
     }
     const messages: UnifiedChatMessage[] = [
       { role: 'system', content: this.buildSystemPrompt(this.useNativeTools(), session, '') },
-      ...llmHistory.map(
-        (m): UnifiedChatMessage => ({ role: m.role as 'user' | 'assistant', content: m.content })
-      ),
+      ...this.buildPromptHistory(session),
     ];
 
     let iterations = 0;
@@ -850,7 +930,7 @@ If you need no tool, respond normally. Use PARAMS: {} for tools with no paramete
               ? String((result as Record<string, unknown>).error || 'failed')
               : undefined;
           this.emitActivity({ type: 'task_end', sessionId, taskId, ok, detail });
-          const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+          const resultStr = this.formatToolResultForPrompt(result);
           messages.push({
             role: 'tool',
             tool_call_id: call.id,
@@ -887,7 +967,7 @@ If you need no tool, respond normally. Use PARAMS: {} for tools with no paramete
             ? String((result as Record<string, unknown>).error || 'failed')
             : undefined;
         this.emitActivity({ type: 'task_end', sessionId, taskId, ok, detail });
-        const resultStr = JSON.stringify(result);
+        const resultStr = this.formatToolResultForPrompt(result);
         messages.push({ role: 'assistant', content });
         messages.push({
           role: 'user',

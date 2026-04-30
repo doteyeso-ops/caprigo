@@ -148,3 +148,28 @@ export interface RuntimePayload {
   };
 }
 
+export interface ExecutionTraceEntry {
+  ts: number;
+  skill: string;
+  ok: boolean;
+  durationMs: number;
+  sessionId?: string;
+  error?: string;
+  paramsSummary?: string;
+  rationale?: string;
+  resultSummary?: string;
+  outputChars?: number;
+}
+
+export interface ExecutionTraceTotals {
+  count: number;
+  failures: number;
+  durationMs: number;
+  outputChars: number;
+  estimatedContextTokens?: number;
+  estimatedOutputTokens?: number;
+  estimatedTotalTokens?: number;
+  pressure?: 'light' | 'watch' | 'heavy';
+  costSignal?: 'low' | 'watch' | 'high';
+}
+

@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { AgentCardModel, LocalScriptItem, RuntimePayload, SessionPatchPayload } from '../types';
+import type { AgentCardModel, ExecutionTraceEntry, ExecutionTraceTotals, LocalScriptItem, RuntimePayload, SessionPatchPayload } from '../types';
 import { SystemMonitorWidget } from './SystemMonitorWidget';
 import { ModelPicker } from './ModelPicker';
+import { inferWorkflowContext } from './workflows';
+import { estimateTracePressure } from './traceHeuristics';
 
 interface DetailsProps {
   agent: AgentCardModel | null;
@@ -55,6 +57,10 @@ export function AgentDetailsDialog({
   const [taskMd, setTaskMd] = useState('');
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskErr, setTaskErr] = useState<string | null>(null);
+  const [traceEntries, setTraceEntries] = useState<ExecutionTraceEntry[]>([]);
+  const [traceTotals, setTraceTotals] = useState<ExecutionTraceTotals | null>(null);
+  const [traceErr, setTraceErr] = useState<string | null>(null);
+  const [traceExporting, setTraceExporting] = useState<'markdown' | 'json' | null>(null);
   const taskPanelRef = useRef<HTMLElement | null>(null);
   /** Avoid re-scrolling when `agent` object identity changes every poll. */
   const taskScrollKeyRef = useRef<string | null>(null);
@@ -82,6 +88,37 @@ export function AgentDetailsDialog({
     return () => clearTimeout(t);
   }, [focusTaskSection, agent?.id, onTaskFocusConsumed]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | null = null;
+    const load = async () => {
+      try {
+        const r = await fetch(`/api/sessions/${agent.id}/execution-log?limit=24`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = (await r.json()) as {
+          entries?: ExecutionTraceEntry[];
+          totals?: ExecutionTraceTotals;
+        };
+        if (cancelled) return;
+        setTraceEntries(d.entries || []);
+        setTraceTotals(d.totals || null);
+        setTraceErr(null);
+      } catch (e) {
+        if (cancelled) return;
+        setTraceErr(e instanceof Error ? e.message : String(e));
+      }
+      if (!cancelled) {
+        const nextMs = document.visibilityState === 'visible' ? 12000 : 30000;
+        timer = window.setTimeout(() => void load(), nextMs);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [agent.id]);
+
   if (!agent) return null;
 
   const nameByScriptId = Object.fromEntries(localScripts.map(s => [s.id, s.name]));
@@ -93,6 +130,38 @@ export function AgentDetailsDialog({
   const showWorkerLink = role === 'agent' && agent.runtimeMode !== 'offline' && peerCount > 0;
   const showSoloFleetHint = role === 'agent' && agent.runtimeMode !== 'offline' && peerCount === 0;
   const showNoOrchestratorToLink = showWorkerLink && orchestrators.length === 0;
+  const workflowContext = inferWorkflowContext(agent, allAgents);
+  const traceInsights = useMemo(() => {
+    if (traceEntries.length === 0 || !traceTotals) return null;
+    const estimate = traceTotals?.estimatedTotalTokens != null && traceTotals?.estimatedContextTokens != null && traceTotals?.estimatedOutputTokens != null
+      ? {
+          pressure: traceTotals.pressure ?? 'light',
+          costSignal: traceTotals.costSignal ?? 'low',
+          estimatedContextTokens: traceTotals.estimatedContextTokens,
+          estimatedOutputTokens: traceTotals.estimatedOutputTokens,
+          estimatedTotalTokens: traceTotals.estimatedTotalTokens,
+        }
+      : estimateTracePressure(traceEntries);
+    if (!estimate) return null;
+    const slowest = traceEntries.reduce((best, entry) => (entry.durationMs > best.durationMs ? entry : best), traceEntries[0]);
+    const loudest = traceEntries.reduce((best, entry) => ((entry.outputChars ?? 0) > (best.outputChars ?? 0) ? entry : best), traceEntries[0]);
+    const latestFailure = [...traceEntries].reverse().find(entry => !entry.ok) ?? null;
+    const avgDurationMs = Math.round(traceTotals.durationMs / Math.max(1, traceTotals.count));
+    const avgOutputChars = Math.round(traceTotals.outputChars / Math.max(1, traceTotals.count));
+
+    return {
+      pressure: estimate.pressure,
+      costSignal: estimate.costSignal,
+      slowest,
+      loudest,
+      latestFailure,
+      avgDurationMs,
+      avgOutputChars,
+      estimatedContextTokens: estimate.estimatedContextTokens,
+      estimatedOutputTokens: estimate.estimatedOutputTokens,
+      estimatedTotalTokens: estimate.estimatedTotalTokens,
+    };
+  }, [traceEntries, traceTotals]);
 
   const runFleet = async (
     patch: { agentRole?: 'agent' | 'orchestrator'; linkedOrchestratorId?: string | null }
@@ -125,6 +194,31 @@ export function AgentDetailsDialog({
     }
   };
 
+  const exportTrace = async (format: 'markdown' | 'json') => {
+    setTraceExporting(format);
+    try {
+      const response = await fetch(`/api/sessions/${agent.id}/execution-log/export?format=${format}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const text = await response.text();
+      const blob = new Blob([text], {
+        type: format === 'json' ? 'application/json;charset=utf-8' : 'text/markdown;charset=utf-8',
+      });
+      const url = URL.createObjectURL(blob);
+      const safeName = (agent.displayName || 'agent').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '') || 'agent';
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${safeName}-trace.${format === 'json' ? 'json' : 'md'}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTraceExporting(null);
+    }
+  };
+
   return (
     <div className="rb-dialog-root" role="presentation" onClick={onClose}>
       <div
@@ -134,9 +228,19 @@ export function AgentDetailsDialog({
         onClick={e => e.stopPropagation()}
       >
         <header className="rb-dialog__head">
-          <h2 id="agent-details-title" className="rb-dialog__title">
-            Agent details
-          </h2>
+          <div>
+            <h2 id="agent-details-title" className="rb-dialog__title">
+              Agent details
+            </h2>
+            {workflowContext && (
+              <p className="rb-dialog__workflow-note">
+                <strong>{workflowContext.workflow.title}</strong> · {workflowContext.workflow.blurb}{' '}
+                {workflowContext.selectedIsLead
+                  ? 'This agent is the workflow lead.'
+                  : `This agent reports to ${workflowContext.lead.displayName}.`}
+              </p>
+            )}
+          </div>
           <button type="button" className="rb-icon-btn" onClick={onClose}>
             Close
           </button>
@@ -217,6 +321,133 @@ export function AgentDetailsDialog({
             </div>
           </section>
         )}
+
+        <section className="rb-trace-panel" aria-label="Recent tool trace">
+          <div className="rb-trace-panel__head">
+            <div>
+              <h3 className="rb-trace-panel__title">Recent trace</h3>
+              {traceTotals && (
+                <div className="rb-trace-panel__stats">
+                  <span>{traceTotals.count} calls</span>
+                  <span>{traceTotals.failures} failures</span>
+                  <span>{traceTotals.durationMs} ms</span>
+                  <span>{traceTotals.outputChars} chars</span>
+                </div>
+              )}
+            </div>
+            <div className="rb-trace-panel__actions">
+              <button
+                type="button"
+                className="rb-btn rb-btn--ghost rb-btn--tight"
+                disabled={traceExporting !== null}
+                onClick={() => void exportTrace('markdown')}
+              >
+                {traceExporting === 'markdown' ? 'Exporting…' : 'Export markdown'}
+              </button>
+              <button
+                type="button"
+                className="rb-btn rb-btn--ghost rb-btn--tight"
+                disabled={traceExporting !== null}
+                onClick={() => void exportTrace('json')}
+              >
+                {traceExporting === 'json' ? 'Exporting…' : 'Export JSON'}
+              </button>
+            </div>
+          </div>
+          <p className="rb-muted rb-trace-panel__lede">
+            Compact replay of recent tool usage for this agent. It now includes a short reason for each call and can be exported as markdown or JSON.
+          </p>
+          {workflowContext && (
+            <p className="rb-trace-panel__workflow-note">
+              Workflow context: <strong>{workflowContext.workflow.title}</strong> · {workflowContext.workflow.bestFor}
+            </p>
+          )}
+          {traceInsights && (
+            <div className="rb-trace-insights" aria-label="Trace summary">
+              <div className="rb-trace-insights__row">
+                <span className={`rb-trace-insights__pill rb-trace-insights__pill--${traceInsights.pressure}`}>
+                  {traceInsights.pressure === 'light'
+                    ? 'Light trace'
+                    : traceInsights.pressure === 'watch'
+                      ? 'Watch context pressure'
+                      : 'Heavy trace pressure'}
+                </span>
+                <span className={`rb-trace-insights__pill rb-trace-insights__pill--cost-${traceInsights.costSignal}`}>
+                  {traceInsights.costSignal === 'low'
+                    ? 'Low cost signal'
+                    : traceInsights.costSignal === 'watch'
+                      ? 'Watch cost signal'
+                      : 'High cost signal'}
+                </span>
+                <span className="rb-trace-insights__meta">avg {traceInsights.avgDurationMs} ms</span>
+                <span className="rb-trace-insights__meta">avg {traceInsights.avgOutputChars} chars</span>
+              </div>
+              <div className="rb-trace-insights__grid">
+                <div className="rb-trace-insights__card">
+                  <span className="rb-trace-insights__label">Context estimate</span>
+                  <strong>~{traceInsights.estimatedContextTokens.toLocaleString()} tok</strong>
+                  <span className="rb-trace-insights__value">from params, rationale, and result summaries</span>
+                </div>
+                <div className="rb-trace-insights__card">
+                  <span className="rb-trace-insights__label">Output estimate</span>
+                  <strong>~{traceInsights.estimatedOutputTokens.toLocaleString()} tok</strong>
+                  <span className="rb-trace-insights__value">from captured tool output volume</span>
+                </div>
+                <div className="rb-trace-insights__card">
+                  <span className="rb-trace-insights__label">Slowest tool</span>
+                  <strong>{traceInsights.slowest.skill}</strong>
+                  <span className="rb-trace-insights__value">{traceInsights.slowest.durationMs} ms</span>
+                </div>
+                <div className="rb-trace-insights__card">
+                  <span className="rb-trace-insights__label">Noisiest tool</span>
+                  <strong>{traceInsights.loudest.skill}</strong>
+                  <span className="rb-trace-insights__value">{traceInsights.loudest.outputChars ?? 0} chars</span>
+                </div>
+                <div className="rb-trace-insights__card">
+                  <span className="rb-trace-insights__label">Latest failure</span>
+                  <strong>{traceInsights.latestFailure ? traceInsights.latestFailure.skill : 'None'}</strong>
+                  <span className="rb-trace-insights__value">
+                    {traceInsights.latestFailure ? new Date(traceInsights.latestFailure.ts).toLocaleTimeString() : 'Clean recent run'}
+                  </span>
+                </div>
+              </div>
+              <p className="rb-trace-insights__note">
+                Rough estimate only. This is a local context/cost signal derived from trace text volume, not provider billing data.
+              </p>
+            </div>
+          )}
+          {traceErr ? (
+            <p className="rb-builder__err">{traceErr}</p>
+          ) : traceEntries.length === 0 ? (
+            <p className="rb-muted">No recent tool trace for this agent yet.</p>
+          ) : (
+            <div className="rb-trace-list">
+              {traceEntries.slice().reverse().map((entry, idx) => (
+                <article key={`${entry.ts}-${idx}`} className={`rb-trace-item${entry.ok ? '' : ' rb-trace-item--err'}`}>
+                  <div className="rb-trace-item__top">
+                    <span className="rb-trace-item__skill">{entry.skill}</span>
+                    <span className={`rb-trace-item__badge ${entry.ok ? 'rb-trace-item__badge--ok' : 'rb-trace-item__badge--err'}`}>
+                      {entry.ok ? 'ok' : 'error'}
+                    </span>
+                    <span className="rb-trace-item__meta">{entry.durationMs} ms</span>
+                    {typeof entry.outputChars === 'number' && (
+                      <span className="rb-trace-item__meta">{entry.outputChars} chars</span>
+                    )}
+                    <span className="rb-trace-item__meta">{new Date(entry.ts).toLocaleTimeString()}</span>
+                  </div>
+                  {entry.rationale && <p className="rb-trace-item__rationale"><strong>why:</strong> {entry.rationale}</p>}
+                  {entry.resultSummary && <p className="rb-trace-item__summary">{entry.resultSummary}</p>}
+                  {entry.paramsSummary && (
+                    <p className="rb-trace-item__params">
+                      <strong>params:</strong> {entry.paramsSummary}
+                    </p>
+                  )}
+                  {!entry.ok && entry.error && <p className="rb-trace-item__error">{entry.error}</p>}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
 
         <dl className="rb-dialog__dl">
           <dt>Display name</dt>
@@ -427,7 +658,7 @@ export function AgentDetailsDialog({
               Live view of the machine running the gateway (not this session). Use <span className="rb-mono">system_monitor</span>{' '}
               in Session tools for the same snapshot.
             </p>
-            <SystemMonitorWidget layout="embedded" pollMs={2800} onPin={onPinSystemMonitor} />
+            <SystemMonitorWidget layout="embedded" pollMs={8000} onPin={onPinSystemMonitor} />
           </dd>
         </dl>
       </div>
