@@ -24,6 +24,7 @@ import {
 } from '@caprigo/shared';
 import { parseToolArguments, skillToOllamaTool } from './tool-schema';
 import { logSkillExecution } from './execution-log';
+import { filterLeanSkills, isLeanToolsActive } from './lean-skills';
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
@@ -177,13 +178,23 @@ export class Agent {
     session.updatedAt = Date.now();
   }
 
-  /** Whitelist of skill names for this session, or all skills if unset / empty. */
+  /** Whitelist of skill names for this session, or lean/all if unset / empty. */
   getSkillsForSession(session: Session): Skill[] {
     const all = this.getSkills();
     const pick = session.assignedSkills?.filter(Boolean);
-    if (!pick?.length) return all;
-    const set = new Set(pick);
-    return all.filter(s => set.has(s.name));
+    if (pick?.length) {
+      const set = new Set(pick);
+      return all.filter(s => set.has(s.name));
+    }
+    if (isLeanToolsActive(!!this.config.laptopMode)) {
+      return filterLeanSkills(all);
+    }
+    return all;
+  }
+
+  /** Whether unrestricted sessions use the lean allowlist (env and/or laptopMode). */
+  isLeanToolsActive(): boolean {
+    return isLeanToolsActive(!!this.config.laptopMode);
   }
 
   setSessionAssignedSkills(sessionId: string, names: string[]): void {
@@ -647,9 +658,8 @@ The last tool batch included at least one **failure**. Read those tool results, 
   }
 
   private buildSystemPrompt(nativeTools: boolean, session: Session, ephemeralSuffix = ''): string {
-    const skillList = this.getSkillsForSession(session)
-      .map(s => `- ${s.name}: ${s.description}`)
-      .join('\n');
+    const sessionSkills = this.getSkillsForSession(session);
+    const skillList = sessionSkills.map(s => `- ${s.name}: ${s.description}`).join('\n');
     const base = this.config.systemPrompt || 'You are a helpful AI assistant.';
     const envContext = `
 
@@ -728,12 +738,13 @@ No orchestrator is linked. Own the user’s request end-to-end with tools. You m
         : `${this.loadAgentInstructionsBlock(session)}${this.loadInlineInstructionsBlock(session)}`;
 
     if (nativeTools) {
+      // Schemas already go in tools[]; avoid duplicating full descriptions into the system prompt.
+      const leanNote = isLeanToolsActive(!!this.config.laptopMode)
+        ? ' Lean tool set is active (8GB-friendly). Assign more skills on the agent if you need vibes/MCP/Agent Skills.'
+        : '';
       return `${base}${fleetHint}${missionBlock}${autonomyBlock}${globalProgramGuideBlock}${instructionBlock}${envContext}${ephemeralSuffix}
 
-You have tools (functions). Call them when you need external data or actions. After receiving tool results, continue until you can answer the user clearly in plain language.
-
-Available tools:
-${skillList}`;
+You have ${sessionSkills.length} tools as functions (schemas provided with this request). Call them when you need external data or actions. After receiving tool results, continue until you can answer the user clearly in plain language.${leanNote}`;
     }
 
     return `${base}${fleetHint}${missionBlock}${autonomyBlock}${globalProgramGuideBlock}${instructionBlock}${envContext}${ephemeralSuffix}

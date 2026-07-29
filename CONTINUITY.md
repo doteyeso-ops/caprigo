@@ -106,6 +106,7 @@ Document **`CAPRIGO_*`**. Older installs: the same values are merged via `caprig
 | `CAPRIGO_HOME` | Override data directory root |
 | `CAPRIGO_GATEWAY_URL` | CLI default gateway URL |
 | `CAPRIGO_WORKSPACE` | Directory used to resolve each agent’s **`agentInstructionsPath`** (relative `.md` file merged into that agent’s LLM system prompt). Default: gateway `process.cwd()`. |
+| `CAPRIGO_LEAN_TOOLS` | `1` / `true` — unrestricted agents only get the lean core allowlist (~17 tools: files/web/shell/memory/fleet). Also auto-on when **laptopMode** is enabled. `0` / `false` forces the full catalog. Explicit **assignedSkills** always win. |
 | `CAPRIGO_DISABLE_WEB_TOOLS` | `1` / `true` — disables **`web_search`** and **`web_fetch`** only (`http_get` / `http_post` unchanged). |
 | `CAPRIGO_DISABLE_EXECUTE_COMMAND` | `1` / `true` — disables **`execute_command`**. |
 | `CAPRIGO_HTTP_MAX_BODY_BYTES` | Max characters stored from **`http_get`** / **`http_post`** bodies (default **2000000**; capped at 20M). |

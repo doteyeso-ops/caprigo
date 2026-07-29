@@ -12,6 +12,8 @@
 | AMD lived proof | [rx580-vulkan-agents](https://github.com/doteyeso-ops/rx580-vulkan-agents) · [docs/AMD.md](docs/AMD.md) |
 | Demo video | [docs/demo/Caprigo_AMD_Demo.mp4](docs/demo/Caprigo_AMD_Demo.mp4) (~72s, VO) |
 
+**8GB / scrap GPUs:** set `CAPRIGO_LEAN_TOOLS=1` so unrestricted agents send ~17 core tools instead of the full ~170-tool catalog (vibes / Agent Skills / MCP schemas). Assign skills when you need the extras.
+
 - **Caprigo Core** — runtime (LLM adapters, skills, sessions, gateway)
 - **Caprigo CLI** — `caprigo` command-line client
 - **Caprigo Mesh** — agent networking (planned)

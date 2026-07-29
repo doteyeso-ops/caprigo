@@ -24,6 +24,15 @@ Writeup + CSVs + screenshots: [doteyeso-ops/rx580-vulkan-agents](https://github.
 - Day-to-day agent ctx **8k–16k**; 32k works on 7B Q4 with care
 - Avoid 9B Q6 + huge ctx (CPU spill / thrash)
 - Flash attention + one model loaded at a time helps
+- **Lean tools:** set `CAPRIGO_LEAN_TOOLS=1` (or enable laptopMode). Unrestricted agents then send ~17 core tools instead of ~170 (vibes/as_*/MCP schemas). Full catalog still available via **Assign skills**. This avoids exceed-context errors on 8k models.
+
+## Scrap → supported delta harness
+
+Repeatable Caprigo Session workload for before/after AMD GPU numbers:
+
+- Pack script: [rx580-vulkan-agents `scripts/bench_agent_delta.ps1`](https://github.com/doteyeso-ops/rx580-vulkan-agents/blob/main/scripts/bench_agent_delta.ps1)
+- Columns: backend, model, lean_tools, tool_count_est, latency_ms, ok/fail
+- Fill **after** on Lemonade Halo / ROCm Radeon with the same prompt
 
 ## Target path (Lemonade / Halo / ROCm)
 
@@ -39,6 +48,7 @@ Same Caprigo agent loops on **supported** AMD:
 CAPRIGO_LLM_PROVIDER=ollama
 OLLAMA_URL=http://127.0.0.1:11434
 DEFAULT_MODEL=qwen2.5-coder:7b
+CAPRIGO_LEAN_TOOLS=1
 # CAPRIGO_OLLAMA_NUM_GPU=99
 ```
 
