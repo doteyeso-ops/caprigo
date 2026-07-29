@@ -16,6 +16,8 @@ Unsupported by modern ROCm. Still runs day-to-day coding agents:
 
 Writeup + CSVs + screenshots: [doteyeso-ops/rx580-vulkan-agents](https://github.com/doteyeso-ops/rx580-vulkan-agents)
 
+**Demo video (~72s, VO):** [Caprigo_AMD_Demo.mp4](demo/Caprigo_AMD_Demo.mp4)
+
 ## Operator notes for 8GB
 
 - Prefer **3B–7B Q4**; full GPU offload (`num_gpu` high / `99`)

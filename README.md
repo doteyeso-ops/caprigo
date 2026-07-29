@@ -10,10 +10,19 @@
 | License | MIT |
 | Marketplace | [vibes-coded.com](https://vibes-coded.com) |
 | AMD lived proof | [rx580-vulkan-agents](https://github.com/doteyeso-ops/rx580-vulkan-agents) · [docs/AMD.md](docs/AMD.md) |
+| Demo video | [docs/demo/Caprigo_AMD_Demo.mp4](docs/demo/Caprigo_AMD_Demo.mp4) (~72s, VO) |
 
 - **Caprigo Core** — runtime (LLM adapters, skills, sessions, gateway)
 - **Caprigo CLI** — `caprigo` command-line client
 - **Caprigo Mesh** — agent networking (planned)
+
+## Demo (AMD)
+
+[~72 second walkthrough](docs/demo/Caprigo_AMD_Demo.mp4) — Caprigo Overview / Session / Board, RX 580 Vulkan lab baseline, voiceover.
+
+https://github.com/doteyeso-ops/caprigo/raw/main/docs/demo/Caprigo_AMD_Demo.mp4
+
+More AMD context: [docs/AMD.md](docs/AMD.md) · scrap pack: [rx580-vulkan-agents](https://github.com/doteyeso-ops/rx580-vulkan-agents)
 
 ## Quick Start
 
