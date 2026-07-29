@@ -1,22 +1,30 @@
 # Caprigo
 
-**Caprigo** is the product: local-first AI agents, fleet UI, and marketplace-connected skills.
+**Local-first AI agent runtime** — tools, MCP, missions, Board/Session, marketplace-connected skills.
 
-The public product home for the beta is **[caprigoai.com](https://caprigoai.com)**.
+| | |
+|-|-|
+| Product | [caprigoai.com](https://caprigoai.com) |
+| Repo | https://github.com/doteyeso-ops/caprigo |
+| Credit | **b_Radford** · Vibes-Coded |
+| License | MIT |
+| Marketplace | [vibes-coded.com](https://vibes-coded.com) |
+| AMD lived proof | [rx580-vulkan-agents](https://github.com/doteyeso-ops/rx580-vulkan-agents) · [docs/AMD.md](docs/AMD.md) |
 
-For the current beta, **[vibes-coded.com](https://vibes-coded.com)** is Caprigo's marketplace home. It is where Caprigo-related AI agent skills are bought, sold, and imported into the runtime. Caprigo also supports a connector path for external agent skill ecosystems so those skills can tie back to the Vibes marketplace.
-
-- **Caprigo Core** — the runtime engine (LLM adapters, skills, sessions, gateway).
-- **Caprigo CLI** — command-line client (`caprigo`).
-- **Caprigo Mesh** — agent networking (planned; not in this repo yet).
+- **Caprigo Core** — runtime (LLM adapters, skills, sessions, gateway)
+- **Caprigo CLI** — `caprigo` command-line client
+- **Caprigo Mesh** — agent networking (planned)
 
 ## Quick Start
 
 ```bash
+git clone https://github.com/doteyeso-ops/caprigo.git
+cd caprigo
+cp .env.example .env   # edit OLLAMA_URL / DEFAULT_MODEL if needed
 npm install
 npm run build
-npm run build:web    # Build dashboard
-npm run start       # Caprigo Core gateway on :18789 (serves API + dashboard)
+npm run build:web
+npm run start          # gateway + dashboard on :18789
 ```
 
 For the recommended beta setup path, see `INSTALL_AND_FIRST_RUN.md`.
@@ -218,15 +226,14 @@ Caprigo only **calls** Ollama over HTTP; **GPU vs CPU is decided on the Ollama h
 
 #### AMD RX 580 (8 GB) and similar Polaris cards
 
-**Ollama’s official AMD path is ROCm on Linux**, and **many builds target newer RDNA cards**. **Polaris (RX 580 / 570 / etc.) is often not in the supported set**, so Ollama may **fall back to CPU** even though the GPU shows idle — which matches “CPU heavy, GPU ~1%.” That is usually a **hardware/software support** issue on the Ollama host, not something Caprigo can fix over HTTP.
+**Modern ROCm dropped Polaris.** On **Windows**, the path that works is **Ollama → Vulkan** (ggml). We run Caprigo agents this way on a production RX 580 box — see [docs/AMD.md](docs/AMD.md) and [rx580-vulkan-agents](https://github.com/doteyeso-ops/rx580-vulkan-agents).
 
 **Realistic options:**
 
-- **Confirm** with `ollama ps` / server logs whether layers are on GPU or CPU.
-- **Linux + ROCm:** Some users experiment with overrides (e.g. `HSA_OVERRIDE_GFX_VERSION`); results vary and can be unstable — search for your distro + “Ollama RX 580”.
-- **Experimental Vulkan:** Ollama can enable extra GPU coverage via Vulkan (`OLLAMA_VULKAN=1` on the **Ollama server** — see [Ollama GPU](https://docs.ollama.com/gpu) / FAQ). Worth a try on Windows or Linux if ROCm does not list your card; still experimental.
-- **Optimize CPU path:** Fewer threads competing with the system, **smaller / Q4 models**, **lower `num_ctx`**, and `CAPRIGO_OLLAMA_NUM_THREAD` to tune CPU threads.
-- **Hardware path with fewer headaches:** A **supported AMD (e.g. RX 6000/7000)** or **NVIDIA** card that Ollama documents for your OS, if you need reliable GPU offload.
+- **Windows + Vulkan:** Preferred for Polaris today. Confirm with `ollama ps` that layers are on GPU.
+- **Linux + ROCm:** Usually a dead end on modern stacks for gfx803; experimental overrides are fragile.
+- **Optimize fit:** Smaller / Q4 models, lower `num_ctx`, high `num_gpu` / layer offload, one model loaded.
+- **Supported path:** Lemonade / Ryzen AI Halo / Radeon+ROCm for the same Caprigo loops with more headroom.
 
 4. **From Caprigo’s gateway (optional):** Set **`CAPRIGO_OLLAMA_NUM_GPU`** so requests include Ollama’s **`num_gpu`** (number of **layers** offloaded — not “GPU index”). Example: try **`99`** or **`-1`** if your Ollama version accepts “max layers” (check server logs / `ollama ps`). **`CAPRIGO_OLLAMA_NUM_THREAD`** sets CPU thread count for layers that stay on CPU. This only helps if the **Ollama host** already has a working GPU backend; it does not add ROCm support for an unsupported card.
 

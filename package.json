@@ -2,6 +2,7 @@
   "name": "caprigo",
   "version": "2.0.0",
   "description": "Caprigo - local-first AI agents. Caprigo Core runtime, web UI, Caprigo CLI.",
+  "license": "MIT",
   "private": true,
   "workspaces": [
     "packages/*"
