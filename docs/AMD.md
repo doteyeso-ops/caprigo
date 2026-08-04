@@ -26,13 +26,14 @@ Writeup + CSVs + screenshots: [doteyeso-ops/rx580-vulkan-agents](https://github.
 - Flash attention + one model loaded at a time helps
 - **Lean tools:** set `CAPRIGO_LEAN_TOOLS=1` (or enable laptopMode). Unrestricted agents then send ~17 core tools instead of ~170 (vibes/as_*/MCP schemas). Full catalog still available via **Assign skills**. This avoids exceed-context errors on 8k models.
 
-## Scrap → supported delta harness
+## Scrap → supported delta (measured)
 
-Repeatable Caprigo Session workload for before/after AMD GPU numbers:
+| | Scrap RX 580 Vulkan | ROCm gfx1100 vLLM (DevMaster cloud) |
+|--|--|--|
+| 7B-class decode | ~**19** tok/s | Qwen2.5-7B-Instruct **29.21** tok/s (~**1.5×**) |
 
-- Pack script: [rx580-vulkan-agents `scripts/bench_agent_delta.ps1`](https://github.com/doteyeso-ops/rx580-vulkan-agents/blob/main/scripts/bench_agent_delta.ps1)
-- Columns: backend, model, lean_tools, tool_count_est, latency_ms, ok/fail
-- Fill **after** on Lemonade Halo / ROCm Radeon with the same prompt
+Harness / Session scrap CSV: [rx580-vulkan-agents `bench_agent_delta.ps1`](https://github.com/doteyeso-ops/rx580-vulkan-agents/blob/main/scripts/bench_agent_delta.ps1)  
+Contest packet: [DevMaster PR #48](https://github.com/AMD-DEV-CONTEST/Radeon-hackathon-2026-07/pull/48)
 
 ## Target path (Lemonade / Halo / ROCm)
 
