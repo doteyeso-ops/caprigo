@@ -28,11 +28,11 @@ Writeup + CSVs + screenshots: [doteyeso-ops/rx580-vulkan-agents](https://github.
 
 ## Scrap → supported delta (measured)
 
-| | Scrap RX 580 Vulkan | ROCm gfx1100 vLLM (DevMaster cloud) |
+| | Scrap RX 580 Vulkan | ROCm gfx1100 vLLM |
 |--|--|--|
-| 7B-class decode | ~**19** tok/s | Qwen2.5-7B-Instruct **29.21** tok/s (~**1.5×**) |
+| Matched prompt · 7B · 128 tok · loaded | **13.73** wall tok/s | **29.21** wall tok/s (**~2.1×**) |
+| Lived proof 7B@32k (separate) | ~**19** tok/s | — |
 
-Harness / Session scrap CSV: [rx580-vulkan-agents `bench_agent_delta.ps1`](https://github.com/doteyeso-ops/rx580-vulkan-agents/blob/main/scripts/bench_agent_delta.ps1)  
 Contest packet: [DevMaster PR #48](https://github.com/AMD-DEV-CONTEST/Radeon-hackathon-2026-07/pull/48)
 
 ## Target path (Lemonade / Halo / ROCm)
