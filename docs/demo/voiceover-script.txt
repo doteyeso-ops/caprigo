@@ -1,0 +1,15 @@
+This is Caprigo — a local-first agent runtime from b_Radford and Vibes-Coded.
+
+On the product site, Caprigo is built for operators who need agents in their real workspace: Overview, Session, and Board.
+
+Here is the live runtime. For this cut, Caprigo is chatting through OpenRouter on an NVIDIA Nemotron model, while our scrap baseline remains a PowerColor Radeon RX 580 on Ollama Vulkan.
+
+Overview shows runtime health, one hundred seventy tools, and a focused AMD demo agent — ready for Lemonade and DevMaster.
+
+In Session, the agent answers cleanly: Caprigo is local-first, AMD GPUs keep inference cheap and private, and the same stack can hybridize with OpenRouter NVIDIA models.
+
+Board is the operator HUD — arrange agents, switch LLM or local scripts, and launch workflow crews.
+
+Our RX 580 lab measures decode throughput on Polaris. That lived proof is the scrap baseline before ROCm and Radeon acceleration.
+
+Caprigo is open source on GitHub, MIT licensed. Built by b_Radford for the AMD AI Developer Program.

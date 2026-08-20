@@ -6,139 +6,86 @@
 
 **Local-first agent workspace.** Connect your model once, launch persistent agents, and operate them across chat, tools, scripts, and multi-agent crews — on your machine, with full visibility.
 
-Not another chat box with a thin tool wrapper.
+| | |
+|-|-|
+| Product | [caprigoai.com](https://caprigoai.com) |
+| Repo | https://github.com/doteyeso-ops/caprigo |
+| Credit | **b_Radford** · Vibes-Coded |
+| Marketplace | [vibes-coded.com](https://vibes-coded.com) |
+| AMD lab | [rx580-vulkan-agents](https://github.com/doteyeso-ops/rx580-vulkan-agents) · [docs/AMD.md](docs/AMD.md) |
 
-**Product:** [caprigoai.com](https://caprigoai.com) · **Skills marketplace:** [vibes-coded.com](https://vibes-coded.com) · **Repo:** [github.com/doteyeso-ops/caprigo](https://github.com/doteyeso-ops/caprigo)
+**8GB / scrap GPUs:** set `CAPRIGO_LEAN_TOOLS=1` so unrestricted agents send ~17 core tools instead of the full catalog. Assign skills when you need vibes / Agent Skills / MCP extras.
+
+- **Caprigo Core** — gateway, agent loop, skills, sessions, orchestration APIs
+- **Caprigo CLI** — `caprigo` for setup, doctor, chat, agents, skills
+- **Caprigo Mesh** — agent networking (planned)
 
 ![Caprigo Board — orchestrator and worker crew on the operational canvas](docs/assets/board-crew.png)
 
+## Demo (AMD)
+
+[~72 second walkthrough](docs/demo/Caprigo_AMD_Demo.mp4) — Caprigo Overview / Session / Board on an RX 580 Vulkan lab baseline.
+
+More: [docs/AMD.md](docs/AMD.md) · [rx580-vulkan-agents](https://github.com/doteyeso-ops/rx580-vulkan-agents)
+
 ## Why people use Caprigo
-
-Most AI products still land in one of three buckets:
-
-- **chat-first assistants** that answer questions but do not feel like operators
-- **hosted agent wrappers** abstracted away from the machine where work actually happens
-- **workflow automators** that connect steps but do not feel like persistent, adaptable workers
-
-Caprigo targets a different lane:
 
 | You get | What it means |
 |--------|----------------|
-| Persistent agents | Named workers with objectives, history, and runtime state — not disposable prompts |
-| Local execution | Files, shell, scripts, and tools run where your work already lives |
-| Model-agnostic backends | Ollama locally or any OpenAI-compatible API (LM Studio, OpenRouter, Groq, …) |
-| Operational visibility | Trace exports, crew boards, orchestrator links, and session task state |
-| Expandable skills | Local JS skills, `SKILL.md` playbooks, MCP tools, marketplace imports |
-
-The pitch is not vague autonomy. The pitch is **operable agents you can inspect, equip, and reuse**.
+| Persistent agents | Named workers with objectives, history, and runtime state |
+| Local execution | Files, shell, scripts, and tools on your machine |
+| Model-agnostic backends | Ollama or OpenAI-compatible (LM Studio, OpenRouter, Groq, …) |
+| Operational visibility | Trace exports, crew boards, orchestrator links |
+| Expandable skills | Local JS, `SKILL.md`, MCP, marketplace imports |
 
 ## Screenshots
 
 | Overview | Board (crew ops) |
 |----------|------------------|
-| ![Overview](docs/assets/overview.png) | ![Board with linked crew](docs/assets/board-crew.png) |
+| ![Overview](docs/assets/overview.png) | ![Board](docs/assets/board-crew.png) |
 
 Deep links: `/?tab=overview` · `/?tab=board` · `/?tab=session`
 
 ## Built-in workflow crews
 
-Launch from **Overview** or **Board** without wiring everything by hand:
-
-- **Repo Crew** — repo scout + code operator under a lead
-- **Automation Crew** — local script runner + ops reporter
-- **Launch Audit Crew** — surface checker + risk reviewer for ship-readiness
-- **PR Review Crew** — diff scout + risk reviewer for merge review
-
-Board extras: **Workflow library**, **Workflow Recipes** (saved orchestrator presets), crew strip, and **Heavy** trace badges when a session looks expensive.
+- **Repo Crew** — scout + operator under a lead
+- **Automation Crew** — script runner + ops reporter
+- **Launch Audit Crew** — surface + risk reviewers
+- **PR Review Crew** — diff scout + risk reviewer
 
 ## Quick start
 
 ```bash
 git clone https://github.com/doteyeso-ops/caprigo.git
 cd caprigo
+cp .env.example .env
 npm install
 npm run build
 npm run build:web
 npm run start
 ```
 
-Open **http://127.0.0.1:18789** — gateway serves API + dashboard.
+Open **http://127.0.0.1:18789**.
 
-**Windows (recommended):**
-
-```powershell
-.\setup.ps1
-```
-
-Already configured? `.\launch.ps1`
-
-**First-run helpers:**
+**Windows:** `.\setup.ps1` · daily: `.\launch.ps1`
 
 ```bash
 caprigo setup --interactive
 caprigo doctor
-caprigo agents create -n "Coder"
 ```
 
-See [INSTALL_AND_FIRST_RUN.md](INSTALL_AND_FIRST_RUN.md) for the full beta path.
-
-## Example use cases
-
-**Coding operator** — one agent implements, one reviews, one orchestrator delegates. All in one workspace with file tools and shell access.
-
-**Research desk** — gather sources, summarize, package output. Agents stay on the board instead of shuttling tabs.
-
-**Local script runner** — mix LLM agents with offline runtime modes for tasks that do not need model reasoning every step.
-
-**Skill builder** — prototype skills locally, test against live agents, import from [vibes-coded.com](https://vibes-coded.com), refine before release.
-
-## Add your own skills
-
-Drop a `.js` file into `./skills/` or `~/.caprigo/skills/`. For Agent Skills (`SKILL.md`), use `./skills/agentskills/`.
-
-```javascript
-module.exports = {
-  name: 'my_skill',
-  description: 'What it does',
-  execute: async (params) => {
-    return { success: true, result: 'done' };
-  },
-};
-```
-
-Restart the gateway after adding skills. Core retrieval tools include `repo_map` and `codebase_context` for cheaper, smarter code exploration before `read_file`.
-
-## Trace visibility
-
-Lightweight replay without a separate observability stack:
-
-- Per-session trace with rationale, result summaries, and output-size estimates
-- Rough token/cost heuristics (`light` / `watch` / `heavy`)
-- Markdown/JSON export from agent details
-
-## What ships in this repo
-
-- **Caprigo Core** — gateway, agent loop, skills, sessions, orchestration APIs
-- **Caprigo CLI** — `caprigo` for setup, doctor, chat, agents, skills
-- **Web workspace** — Overview, Board, Session, Settings
-- **Optional** — MCP client, Windows-MCP integration, Vibes marketplace import
+See [INSTALL_AND_FIRST_RUN.md](INSTALL_AND_FIRST_RUN.md) and [SOCIAL_LAUNCH.md](SOCIAL_LAUNCH.md) for beta install + launch copy.
 
 ## Project docs
 
-- [INSTALL_AND_FIRST_RUN.md](INSTALL_AND_FIRST_RUN.md) — beta install path
-- [SOCIAL_LAUNCH.md](SOCIAL_LAUNCH.md) — ready-to-post launch copy
-- [BETA_SMOKE_TEST.md](BETA_SMOKE_TEST.md) — release gate checklist
-- [CAPRIGO_LLM_GUIDE.md](CAPRIGO_LLM_GUIDE.md) — workspace guide injected into LLM sessions
-- [LANDING_PAGE_BRIEF.md](LANDING_PAGE_BRIEF.md) — public positioning
-
-## Requirements
-
-- Node.js 18+
-- An LLM backend: [Ollama](https://ollama.ai) (default) or OpenAI-compatible API
+- [INSTALL_AND_FIRST_RUN.md](INSTALL_AND_FIRST_RUN.md)
+- [SOCIAL_LAUNCH.md](SOCIAL_LAUNCH.md)
+- [BETA_SMOKE_TEST.md](BETA_SMOKE_TEST.md)
+- [docs/AMD.md](docs/AMD.md)
 
 ## Status
 
-Caprigo is in **beta**. The runtime is real; the UX is still tightening. If you try it, open an issue with what broke — that helps more than a star alone (though stars are welcome too).
+Caprigo is in **beta**. Stars welcome; issues with repro steps help more.
 
 ## License
 

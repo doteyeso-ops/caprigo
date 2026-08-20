@@ -108,6 +108,7 @@ import {
   compactMessagesForInference,
   fastModelId,
 } from './prompt-brief';
+import { filterLeanSkills, isLeanToolsActive } from './lean-skills';
 
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
@@ -759,6 +760,8 @@ export class Agent {
     if (pick?.length) {
       const set = new Set(pick);
       skills = all.filter(s => set.has(s.name));
+    } else if (isLeanToolsActive(!!this.config.laptopMode)) {
+      skills = filterLeanSkills(all);
     } else if (this.config.laptopMode) {
       const set = this.boxDefaultSkillNames();
       skills = all.filter(s => set.has(s.name));

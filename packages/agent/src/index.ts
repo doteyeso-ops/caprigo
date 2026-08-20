@@ -60,4 +60,5 @@ export {
   ensureCoreLessons,
 } from './brain';
 export { writeAutoBugReport } from './bug-report';
+export { LEAN_SKILL_ALLOWLIST, isLeanToolsActive, filterLeanSkills } from './lean-skills';
 export type { Skill } from '@caprigo/shared';

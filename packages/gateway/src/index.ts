@@ -9,7 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import type { Server } from 'http';
 import { randomUUID } from 'crypto';
-import { Agent, coreSkills, createFleetSkills, readExecutionLogTail, appendExecutionLog } from '@caprigo/agent';
+import { Agent, coreSkills, createFleetSkills, readExecutionLogTail, appendExecutionLog, filterLeanSkills } from '@caprigo/agent';
 import { OpenAICompatibleLLMBackend, OllamaLLMBackend } from '@caprigo/chat-backend';
 import type { Skill, AgentConfig, Session } from '@caprigo/shared';
 import {
@@ -444,6 +444,8 @@ function runtimePayload() {
     },
     skillsDir: getSkillsDir(),
     skillCount: agent.getSkills().length,
+    leanTools: agent.isLeanToolsActive(),
+    leanToolCount: agent.isLeanToolsActive() ? filterLeanSkills(agent.getSkills()).length : null,
     llmProvider: agent.getLLMProviderId(),
     llmBadge: LLM_BADGE,
     llmConnection: {
