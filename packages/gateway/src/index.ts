@@ -14,9 +14,12 @@ import { OpenAICompatibleLLMBackend, OllamaLLMBackend } from '@caprigo/chat-back
 import type { Skill, AgentConfig, Session } from '@caprigo/shared';
 import {
   caprigoEnv,
+  caprigoDataRoot,
   caprigoWorkspaceRoot,
   normalizeFleetAssignment,
   openAICompatibleRequestHeaders,
+  readFileLedgerTail,
+  summarizeTouchedFiles,
 } from '@caprigo/shared';
 import { loadUserSkills, loadAgentSkills, getSkillsDir, loadSkillsFromFile } from '@caprigo/user-skills-loader';
 import {
@@ -66,6 +69,23 @@ function offlineScriptIdSet(): Set<string> {
   }
 }
 
+function memoryStorePath(): string {
+  return path.join(caprigoDataRoot(), 'memory.json');
+}
+
+function readMemoryStore(): Record<string, { value: unknown; timestamp: number }> {
+  try {
+    const file = memoryStorePath();
+    if (!fs.existsSync(file)) return {};
+    const raw = fs.readFileSync(file, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, { value: unknown; timestamp: number }>;
+    if (!parsed || typeof parsed !== 'object') return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
 function assertKnownOfflineScriptIds(ids: string[]): string | undefined {
   const valid = offlineScriptIdSet();
   for (const id of ids) {
@@ -79,6 +99,14 @@ function sessionModelFields(s: Session) {
   const ov = s.model?.trim() || null;
   const em = ov || agent.getConfig().model;
   return { model: ov, effectiveModel: em };
+}
+
+function sessionTaskFields(s: Session) {
+  const out: { taskState?: Session['taskState']; taskSummary?: string; taskCheckpointAt?: number } = {};
+  if (s.taskState) out.taskState = s.taskState;
+  if (s.taskSummary) out.taskSummary = s.taskSummary;
+  if (typeof s.taskCheckpointAt === 'number') out.taskCheckpointAt = s.taskCheckpointAt;
+  return out;
 }
 
 const app = express();
@@ -118,6 +146,7 @@ const DEFAULT_SYSTEM_PROMPT = [
   '- Use available tools when they improve correctness, speed, or safety.',
   '- Choose the minimum number of tool calls needed to complete the task.',
   '- After tool results arrive, synthesize clearly and move the task forward.',
+  '- After creating or editing files, you may call list_file_changes to track what you touched.',
   '',
   'Response style:',
   '- Be direct and useful. Prefer short, actionable output by default.',
@@ -248,12 +277,12 @@ function normalizeProvider(raw: unknown): RuntimeLLMProvider {
 const envOllamaUrl = process.env.OLLAMA_URL?.trim() || caprigoEnv('OLLAMA_URL');
 
 const llmState: RuntimeLLMConfig = {
-  provider: normalizeProvider(caprigoEnv('LLM_PROVIDER') || 'ollama'),
+  provider: normalizeProvider(caprigoEnv('LLM_PROVIDER') || 'openai_compatible'),
   ollamaUrl: envOllamaUrl || 'http://localhost:11434',
   openaiBase:
     process.env.OPENAI_BASE_URL?.trim() ||
     process.env.OPENAI_API_BASE?.trim() ||
-    'https://api.openai.com/v1',
+    'http://127.0.0.1:1234/v1',
   openaiApiKey: process.env.OPENAI_API_KEY?.trim() || caprigoEnv('OPENAI_API_KEY') || '',
 };
 const persistedLlmConfig = loadPersistedLLMConfig();
@@ -304,22 +333,31 @@ function createBackendFromRuntimeConfig(): OpenAICompatibleLLMBackend | OllamaLL
 const llmBackend = createBackendFromRuntimeConfig();
 
 // Create agent with default config
+const boxProfile = /^(1|true|yes|box)$/i.test(String(process.env.CAPRIGO_BOX_PROFILE || ''));
+const harnessProfile =
+  !boxProfile && !/^(0|false|off|no)$/i.test(String(process.env.CAPRIGO_HARNESS_MODE ?? '1'));
 const agent = new Agent(
   {
     id: 'main',
     name: 'Caprigo',
     model:
       process.env.DEFAULT_MODEL ||
-      (llmState.provider === 'openai_compatible' ? 'gpt-4o-mini' : 'qwen3.5:latest'),
+      (llmState.provider === 'openai_compatible' ? 'local-model' : 'qwen3.5:latest'),
     temperature: 0.5,
-    maxTokens: 2048,
-    optimizationProfile: 'balanced',
-    ollamaNumCtx: 8192,
-    laptopMode: false,
+    maxTokens: boxProfile ? 1024 : harnessProfile ? 4096 : 2048,
+    optimizationProfile: boxProfile ? 'light' : 'balanced',
+    ollamaNumCtx: boxProfile ? 4096 : 8192,
+    laptopMode: boxProfile ? true : false,
+    harnessMode: harnessProfile,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
   },
   llmBackend
 );
+if (boxProfile) {
+  console.log('[Gateway] CAPRIGO_BOX_PROFILE on — light + laptopMode (4k ctx, capped tools)');
+} else if (harnessProfile) {
+  console.log('[Gateway] Harness mode on — long-horizon tool budgets (LM Studio CLI profile)');
+}
 
 // Register core skills
 coreSkills.forEach(skill => agent.registerSkill(skill));
@@ -340,25 +378,33 @@ userLoadResult.failed.forEach(({ path: p, error }: { path: string; error: string
   console.warn(`[Skills] Failed to load ${p}: ${error}`);
 });
 
-const agentSkillsDir = path.join(getSkillsDir(), 'agentskills');
-const agentSkillsResult = loadAgentSkills(agentSkillsDir);
-agentSkillsResult.loaded.forEach((skill: Skill) => {
-  agent.registerSkill(skill);
-  agentSkillNames.add(skill.name);
-  console.log(`[Agent skills] SKILL.md → ${skill.name}`);
-});
-agentSkillsResult.failed.forEach(({ path: p, error }: { path: string; error: string }) => {
-  console.warn(`[Agent skills] Failed ${p}: ${error}`);
-});
+const skipHeavySkills =
+  boxProfile || /^(1|true|yes)$/i.test(String(process.env.CAPRIGO_SKIP_AGENT_SKILLS || ''));
+let agentSkillsLoaded = 0;
+if (skipHeavySkills) {
+  console.log('[Skills] Skipping agentskills + fleet (box / CAPRIGO_SKIP_AGENT_SKILLS)');
+} else {
+  const agentSkillsDir = path.join(getSkillsDir(), 'agentskills');
+  const agentSkillsResult = loadAgentSkills(agentSkillsDir);
+  agentSkillsResult.loaded.forEach((skill: Skill) => {
+    agent.registerSkill(skill);
+    agentSkillNames.add(skill.name);
+    console.log(`[Agent skills] SKILL.md → ${skill.name}`);
+  });
+  agentSkillsResult.failed.forEach(({ path: p, error }: { path: string; error: string }) => {
+    console.warn(`[Agent skills] Failed ${p}: ${error}`);
+  });
+  agentSkillsLoaded = agentSkillsResult.loaded.length;
 
-createFleetSkills(agent).forEach(s => {
-  agent.registerSkill(s);
-  console.log(`[Skills] Fleet tool: ${s.name}`);
-});
+  createFleetSkills(agent).forEach(s => {
+    agent.registerSkill(s);
+    console.log(`[Skills] Fleet tool: ${s.name}`);
+  });
+}
 
 console.log(`[Skills] Directory: ${getSkillsDir()}`);
 console.log(
-  `[Skills] Total: ${agent.getSkills().length} (${coreSkills.length} core + ${userLoadResult.loaded.length} user + ${agentSkillsResult.loaded.length} agent-skill)`
+  `[Skills] Total: ${agent.getSkills().length} (${coreSkills.length} core + ${userLoadResult.loaded.length} user + ${agentSkillsLoaded} agent-skill)`
 );
 console.log(`[Offline scripts] Directory: ${getOfflineScriptsDir()} (manifest.json or *.mjs/*.js scan)`);
 
@@ -937,6 +983,7 @@ app.post('/api/sessions', (req: express.Request, res: express.Response) => {
           assignedSkills: s.assignedSkills?.length ? [...s.assignedSkills] : null,
           agentRole: normalizeFleetAssignment(s.agentRole),
           linkedOrchestratorId: s.linkedOrchestratorId ?? null,
+          ...sessionTaskFields(s),
           model: mf.model,
           effectiveModel: mf.effectiveModel,
         });
@@ -975,6 +1022,7 @@ app.get('/api/sessions', (_: express.Request, res: express.Response) => {
       runtimeMode: s.runtimeMode === 'offline' ? 'offline' : 'llm',
       agentRole: normalizeFleetAssignment(s.agentRole),
       linkedOrchestratorId: s.linkedOrchestratorId ?? null,
+      ...sessionTaskFields(s),
       model: mf.model,
       effectiveModel: mf.effectiveModel,
     };
@@ -1010,6 +1058,7 @@ app.get('/api/sessions/:id/activity', (req: express.Request, res: express.Respon
     runtimeMode: s.runtimeMode === 'offline' ? 'offline' : 'llm',
     agentRole: normalizeFleetAssignment(s.agentRole),
     linkedOrchestratorId: s.linkedOrchestratorId ?? null,
+    ...sessionTaskFields(s),
     model: mf.model,
     effectiveModel: mf.effectiveModel,
   });
@@ -1188,6 +1237,7 @@ app.patch('/api/sessions/:id', (req: express.Request, res: express.Response) => 
     runtimeMode: s.runtimeMode === 'offline' ? 'offline' : 'llm',
     agentRole: normalizeFleetAssignment(s.agentRole),
     linkedOrchestratorId: s.linkedOrchestratorId ?? null,
+    ...sessionTaskFields(s),
     model: mf.model,
     effectiveModel: mf.effectiveModel,
   });
@@ -1233,10 +1283,29 @@ app.post('/api/sessions/:id/messages', async (req, res) => {
   }
   clearTasksForTurn(id);
   setAgentStatus(id, 'thinking');
+  const t0 = Date.now();
   try {
     const response = await agent.processMessage(id, message);
     setAgentStatus(id, 'idle');
-    res.json({ response });
+    const stats = agent.getLastTurnStats();
+    res.json({
+      response,
+      usage: stats
+        ? {
+            promptTokens: stats.promptTokens,
+            completionTokens: stats.completionTokens,
+            totalTokens: stats.totalTokens,
+          }
+        : undefined,
+      meta: stats
+        ? {
+            llmCalls: stats.llmCalls,
+            tools: stats.tools,
+            elapsedMs: stats.elapsedMs,
+            wallMs: Date.now() - t0,
+          }
+        : { wallMs: Date.now() - t0 },
+    });
   } catch (err: any) {
     const msg = err?.message || 'Failed to process message';
     if (/offline-only/i.test(msg)) {
@@ -1277,6 +1346,163 @@ app.post('/api/sessions/:id/messages', async (req, res) => {
   }
 });
 
+/** SSE streaming variant of POST /messages — live status/token/think/tool events. */
+app.post('/api/sessions/:id/messages/stream', async (req, res) => {
+  const { id } = req.params;
+  const { message } = req.body;
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'message required' });
+  }
+  const sess = agent.getSession(id);
+  if (!sess) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  if (sess.runtimeMode === 'offline') {
+    return res.status(400).json({
+      error:
+        'This agent is offline-only. Switch it to LLM on the Workspace card to chat, or run disk scripts from that card.',
+    });
+  }
+
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof (res as express.Response & { flushHeaders?: () => void }).flushHeaders === 'function') {
+    (res as express.Response & { flushHeaders: () => void }).flushHeaders();
+  }
+
+  const writeEvent = (event: string, data: unknown) => {
+    if (res.writableEnded) return;
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const anyRes = res as express.Response & { flush?: () => void };
+    if (typeof anyRes.flush === 'function') anyRes.flush();
+  };
+
+  let streamedTokens = 0;
+  let livePhase: 'thinking' | 'working' | 'streaming' | 'idle' | 'error' = 'thinking';
+  const prevSink = handleAgentActivity;
+  agent.setActivitySink(e => {
+    prevSink(e);
+    if (e.type === 'status') {
+      if (
+        e.phase === 'thinking' ||
+        e.phase === 'working' ||
+        e.phase === 'streaming' ||
+        e.phase === 'idle' ||
+        e.phase === 'error'
+      ) {
+        livePhase = e.phase;
+      }
+      writeEvent('status', { phase: e.phase, detail: e.detail, sessionId: e.sessionId });
+    } else if (e.type === 'token') {
+      streamedTokens += e.text?.length || 0;
+      livePhase = 'streaming';
+      writeEvent('token', { text: e.text, sessionId: e.sessionId });
+    } else if (e.type === 'think') {
+      writeEvent('think', { text: e.text, sessionId: e.sessionId });
+    } else if (e.type === 'task_start') {
+      livePhase = 'working';
+      writeEvent('tool_start', {
+        taskId: e.taskId,
+        label: e.label,
+        sessionId: e.sessionId,
+      });
+    } else if (e.type === 'task_end') {
+      writeEvent('tool_end', {
+        taskId: e.taskId,
+        ok: e.ok,
+        detail: e.detail,
+        sessionId: e.sessionId,
+      });
+    }
+  });
+
+  clearTasksForTurn(id);
+  setAgentStatus(id, 'thinking');
+  writeEvent('status', { phase: 'thinking', sessionId: id });
+  const t0 = Date.now();
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded) return;
+    if (livePhase !== 'thinking' && livePhase !== 'working') return;
+    const sec = Math.round((Date.now() - t0) / 1000);
+    writeEvent('status', { phase: livePhase, detail: `${sec}s`, sessionId: id });
+  }, 1000);
+
+  try {
+    const response = await agent.processMessage(id, message);
+    clearInterval(heartbeat);
+    setAgentStatus(id, 'idle');
+    if (response && streamedTokens === 0) {
+      writeEvent('status', { phase: 'streaming', sessionId: id });
+      writeEvent('token', { text: response, sessionId: id });
+    }
+    const stats = agent.getLastTurnStats();
+    writeEvent('status', { phase: 'idle', sessionId: id });
+    writeEvent('done', {
+      response,
+      usage: stats
+        ? {
+            promptTokens: stats.promptTokens,
+            completionTokens: stats.completionTokens,
+            totalTokens: stats.totalTokens,
+          }
+        : undefined,
+      meta: stats
+        ? {
+            llmCalls: stats.llmCalls,
+            tools: stats.tools,
+            elapsedMs: stats.elapsedMs,
+            wallMs: Date.now() - t0,
+          }
+        : { wallMs: Date.now() - t0 },
+    });
+  } catch (err: any) {
+    clearInterval(heartbeat);
+    const msg = err?.message || 'Failed to process message';
+    if (/offline-only/i.test(msg)) {
+      setAgentStatus(id, 'idle');
+      writeEvent('error', { error: msg });
+    } else {
+      const isOllamaError =
+        agent.getLLMProviderId() === 'ollama' &&
+        /fetch failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|Ollama|timed out/i.test(msg);
+      const suggestOpenAiEnv =
+        agent.getLLMProviderId() === 'openai_compatible' &&
+        (/fetch failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|getaddrinfo|network|ConnectTimeoutError/i.test(
+          msg
+        ) ||
+          /OpenAI-compatible API error \(\s*401\b|OpenAI-compatible API error \(\s*403\b/i.test(msg));
+      const suggestProviderBalance =
+        agent.getLLMProviderId() === 'openai_compatible' &&
+        /\b402\b|PAYMENT_REQUIRED|Insufficient balance|insufficient credits|insufficient quota/i.test(msg);
+      const suggestOpenAiTimeout =
+        agent.getLLMProviderId() === 'openai_compatible' &&
+        (/AbortError|aborted|operation was aborted/i.test(msg) || /timed out/i.test(msg));
+      const hint = isOllamaError
+        ? /timed out|CAPRIGO_OLLAMA_TIMEOUT_MS/i.test(msg)
+          ? ''
+          : ' Make sure Ollama is running (ollama serve) and you have a model (e.g. ollama pull qwen3:latest).'
+        : suggestOpenAiEnv
+          ? ' Check OPENAI_BASE_URL, OPENAI_API_KEY, and DEFAULT_MODEL for your provider.'
+          : suggestProviderBalance
+            ? ' Add credits or pollen at your API host, or pick a cheaper model in Settings.'
+            : '';
+      const openAiTimeoutHint = suggestOpenAiTimeout
+        ? ' If the model was still generating, increase CAPRIGO_OPENAI_CHAT_TIMEOUT_MS (default 600000 ms) and restart the gateway.'
+        : '';
+      console.error('[Gateway] Stream message error:', msg);
+      setAgentStatus(id, 'error', msg + hint + openAiTimeoutHint);
+      writeEvent('error', { error: msg + hint + openAiTimeoutHint });
+    }
+  } finally {
+    clearInterval(heartbeat);
+    agent.setActivitySink(handleAgentActivity);
+    if (!res.writableEnded) res.end();
+  }
+});
+
 // Recent skill execution log (JSON lines, newest at end of array)
 app.get('/api/execution-log', (req: express.Request, res: express.Response) => {
   const raw = req.query.limit;
@@ -1286,6 +1512,53 @@ app.get('/api/execution-log', (req: express.Request, res: express.Response) => {
     res.json({ entries, count: entries.length });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'Failed to read log' });
+  }
+});
+
+/** Files Caprigo wrote/edited via tools (durable JSONL under CAPRIGO_HOME). */
+app.get('/api/file-ledger', (req: express.Request, res: express.Response) => {
+  const raw = req.query.limit;
+  const limit = Math.min(200, Math.max(1, parseInt(String(raw || '40'), 10) || 40));
+  try {
+    const touched = summarizeTouchedFiles(limit);
+    const events = readFileLedgerTail(Math.min(limit * 2, 200));
+    res.json({ touched, events, count: touched.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'Failed to read file ledger' });
+  }
+});
+
+app.get('/api/memory', (req: express.Request, res: express.Response) => {
+  const rawLimit = parseInt(String(req.query.limit || '20'), 10);
+  const limit = Math.min(100, Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 20));
+  const q = String(req.query.q || '').trim().toLowerCase();
+  try {
+    const store = readMemoryStore();
+    const entries = Object.entries(store)
+      .map(([key, entry]) => ({ key, ...entry }))
+      .filter(entry => {
+        if (!q) return true;
+        const hay = JSON.stringify(entry).toLowerCase();
+        return hay.includes(q);
+      })
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, limit);
+    res.json({ entries, count: entries.length, query: q });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'Failed to read memory' });
+  }
+});
+
+app.get('/api/memory/:key', (req: express.Request, res: express.Response) => {
+  const key = String(req.params.key || '').trim();
+  if (!key) return res.status(400).json({ error: 'key required' });
+  try {
+    const store = readMemoryStore();
+    const entry = store[key];
+    if (!entry) return res.status(404).json({ error: 'Memory key not found' });
+    res.json({ key, ...entry });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'Failed to read memory' });
   }
 });
 
@@ -1392,6 +1665,7 @@ app.get('/api/sessions/:id/execution-log/export', (req: express.Request, res: ex
       displayName: getLaunchedAgent(sessionId)?.displayName || 'Agent',
       runtimeMode: session.runtimeMode === 'offline' ? 'offline' : 'llm',
       agentRole: normalizeFleetAssignment(session.agentRole),
+      ...sessionTaskFields(session),
       model: session.model || agent.getConfig().model,
       description: session.description || '',
       objective: session.objective || '',
@@ -1465,18 +1739,20 @@ function mergeUserSkillsFromDisk(): void {
     userSkillNames.add(skill.name);
   });
 
-  const ar = loadAgentSkills(agentSkillsDir);
-  const seenA = new Set(ar.loaded.map((s: Skill) => s.name));
-  for (const name of Array.from(agentSkillNames)) {
-    if (!seenA.has(name)) {
-      agent.unregisterSkill(name);
-      agentSkillNames.delete(name);
+  if (!skipHeavySkills) {
+    const ar = loadAgentSkills(path.join(getSkillsDir(), 'agentskills'));
+    const seenA = new Set(ar.loaded.map((s: Skill) => s.name));
+    for (const name of Array.from(agentSkillNames)) {
+      if (!seenA.has(name)) {
+        agent.unregisterSkill(name);
+        agentSkillNames.delete(name);
+      }
     }
+    ar.loaded.forEach((skill: Skill) => {
+      agent.registerSkill(skill);
+      agentSkillNames.add(skill.name);
+    });
   }
-  ar.loaded.forEach((skill: Skill) => {
-    agent.registerSkill(skill);
-    agentSkillNames.add(skill.name);
-  });
 }
 
 const LOCAL_SKILLS_DB_FILE = '.caprigo-skills-db.json';
@@ -1774,8 +2050,17 @@ app.post('/api/user-skills', (req: express.Request, res: express.Response) => {
 const webDist = path.join(__dirname, '../../web/dist');
 try {
   if (fs.existsSync(webDist)) {
-    app.use(express.static(webDist));
+    app.use(
+      express.static(webDist, {
+        etag: false,
+        lastModified: false,
+        setHeaders(res) {
+          res.setHeader('Cache-Control', 'no-store');
+        },
+      })
+    );
     app.get('*', (_: express.Request, res: express.Response) => {
+      res.setHeader('Cache-Control', 'no-store');
       res.sendFile(path.join(webDist, 'index.html'));
     });
   }

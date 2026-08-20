@@ -217,7 +217,7 @@ export function SettingsPanel({
         <section className="rb-settings__section">
           <h2 className="rb-settings__h">Connection</h2>
           <p className="rb-settings__opt-lede rb-muted">
-            Configure LLM provider and API endpoint here. Ollama routes remain available for local models.
+            Configure LLM provider and API endpoint here. Use OpenAI-compatible endpoints for rented GPU hosts or remote inference, and keep Ollama for local models.
           </p>
           <div className="rb-settings__grid">
             <label className="rb-settings__field">
@@ -228,7 +228,7 @@ export function SettingsPanel({
                 onChange={e => setConnectionProvider(e.target.value as 'ollama' | 'openai_compatible')}
               >
                 <option value="ollama">Ollama (local)</option>
-                <option value="openai_compatible">OpenAI-compatible API</option>
+                <option value="openai_compatible">OpenAI-compatible API (remote / GPU)</option>
               </select>
             </label>
 

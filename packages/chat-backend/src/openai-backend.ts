@@ -4,6 +4,7 @@
 
 import type {
   ChatLLMBackend,
+  ChatStreamEvent,
   UnifiedChatMessage,
   UnifiedChatRequest,
   UnifiedChatResponse,
@@ -136,15 +137,19 @@ export class OpenAICompatibleLLMBackend implements ChatLLMBackend {
     this.apiKey = apiKey;
   }
 
-  async chat(request: UnifiedChatRequest): Promise<UnifiedChatResponse> {
+  private buildChatBody(request: UnifiedChatRequest, stream: boolean): Record<string, unknown> {
     const body: Record<string, unknown> = {
       model: request.model,
       messages: toOpenAIMessages(request.messages),
       temperature: request.temperature ?? 0.7,
       max_tokens: request.maxTokens ?? 2048,
+      stream,
     };
     if (request.tools?.length) {
       body.tools = request.tools;
+    }
+    if (request.toolChoice != null) {
+      body.tool_choice = request.toolChoice;
     }
     const omitMax =
       process.env.CAPRIGO_OPENAI_OMIT_MAX_TOKENS === '1' ||
@@ -152,6 +157,12 @@ export class OpenAICompatibleLLMBackend implements ChatLLMBackend {
     if (omitMax) {
       delete body.max_tokens;
     }
+    return body;
+  }
+
+  async chat(request: UnifiedChatRequest): Promise<UnifiedChatResponse> {
+    const body = this.buildChatBody(request, false);
+    delete body.stream;
 
     const headers = openAICompatibleRequestHeaders({
       bearerToken: this.apiKey || null,
@@ -178,5 +189,214 @@ export class OpenAICompatibleLLMBackend implements ChatLLMBackend {
     }
 
     return parseOpenAIResponse(data);
+  }
+
+  /**
+   * SSE stream for OpenAI-compatible servers (LM Studio, OpenRouter, etc.).
+   * Assembles incremental tool_calls deltas into a final UnifiedChatResponse.
+   */
+  async chatStream(
+    request: UnifiedChatRequest,
+    onEvent: (e: ChatStreamEvent) => void
+  ): Promise<UnifiedChatResponse> {
+    const body = this.buildChatBody(request, true);
+    const headers = openAICompatibleRequestHeaders({
+      bearerToken: this.apiKey || null,
+      contentTypeJson: true,
+    });
+
+    const res = await fetch(this.endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(chatTimeoutMs()),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(formatOpenAICompatibleHttpError(res.status, text));
+    }
+
+    if (!res.body) {
+      // Some local servers ignore stream and return JSON — fall back.
+      const text = await res.text();
+      let data: unknown;
+      try {
+        data = JSON.parse(text) as unknown;
+      } catch {
+        throw new Error('OpenAI-compatible API: empty stream body and invalid JSON');
+      }
+      const parsed = parseOpenAIResponse(data);
+      const content = parsed.message.content || '';
+      if (content) onEvent({ type: 'token', text: content });
+      if (parsed.usage) onEvent({ type: 'usage', usage: parsed.usage });
+      return parsed;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    let role = 'assistant';
+    const toolAcc = new Map<
+      number,
+      { id: string; name: string; arguments: string }
+    >();
+    let usage: UnifiedChatResponse['usage'] | undefined;
+
+    const flushToolCalls = (): UnifiedToolCall[] | undefined => {
+      if (toolAcc.size === 0) return undefined;
+      const keys = [...toolAcc.keys()].sort((a, b) => a - b);
+      return keys.map(i => {
+        const t = toolAcc.get(i)!;
+        return {
+          id: t.id || `call_${i}`,
+          type: 'function' as const,
+          function: {
+            name: t.name || 'unknown',
+            arguments: t.arguments || '{}',
+          },
+        };
+      });
+    };
+
+    const handleDataPayload = (raw: string) => {
+      const trimmed = raw.trim();
+      if (!trimmed || trimmed === '[DONE]') return;
+      let data: {
+        choices?: Array<{
+          delta?: {
+            role?: string;
+            content?: string | null;
+            reasoning_content?: string | null;
+            tool_calls?: Array<{
+              index?: number;
+              id?: string;
+              type?: string;
+              function?: { name?: string; arguments?: string };
+            }>;
+          };
+          message?: {
+            role?: string;
+            content?: string | null;
+            tool_calls?: Array<{
+              id: string;
+              function?: { name?: string; arguments?: string };
+            }>;
+          };
+        }>;
+        usage?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          total_tokens?: number;
+        };
+      };
+      try {
+        data = JSON.parse(trimmed) as typeof data;
+      } catch {
+        return;
+      }
+
+      if (data.usage) {
+        usage = {
+          promptTokens: data.usage.prompt_tokens,
+          completionTokens: data.usage.completion_tokens,
+          totalTokens: data.usage.total_tokens,
+        };
+      }
+
+      const choice = data.choices?.[0];
+      if (!choice) return;
+
+      // Non-streaming-shaped chunk (rare)
+      if (choice.message && !choice.delta) {
+        if (choice.message.role) role = choice.message.role;
+        const c = choice.message.content ?? '';
+        if (c) {
+          content += c;
+          onEvent({ type: 'token', text: c });
+        }
+        if (choice.message.tool_calls?.length) {
+          choice.message.tool_calls.forEach((tc, i) => {
+            toolAcc.set(i, {
+              id: tc.id,
+              name: tc.function?.name ?? '',
+              arguments: tc.function?.arguments ?? '{}',
+            });
+          });
+        }
+        return;
+      }
+
+      const delta = choice.delta as {
+        role?: string;
+        content?: string | null;
+        reasoning_content?: string | null;
+        reasoning?: string | null;
+        thinking?: string | null;
+        tool_calls?: Array<{
+          index?: number;
+          id?: string;
+          type?: string;
+          function?: { name?: string; arguments?: string };
+        }>;
+      };
+      if (!delta) return;
+      if (delta.role) role = delta.role;
+
+      const thinkPiece =
+        (typeof delta.reasoning_content === 'string' && delta.reasoning_content) ||
+        (typeof delta.reasoning === 'string' && delta.reasoning) ||
+        (typeof delta.thinking === 'string' && delta.thinking) ||
+        '';
+      if (thinkPiece) onEvent({ type: 'think', text: thinkPiece });
+
+      const piece = delta.content;
+      if (piece) {
+        content += piece;
+        onEvent({ type: 'token', text: piece });
+      }
+
+      if (delta.tool_calls?.length) {
+        for (const tc of delta.tool_calls) {
+          const idx = typeof tc.index === 'number' ? tc.index : 0;
+          const prev = toolAcc.get(idx) || { id: '', name: '', arguments: '' };
+          if (tc.id) prev.id = tc.id;
+          if (tc.function?.name) prev.name += tc.function.name;
+          if (tc.function?.arguments) prev.arguments += tc.function.arguments;
+          toolAcc.set(idx, prev);
+        }
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split(/\r?\n/);
+      buffer = parts.pop() ?? '';
+      for (const line of parts) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith('data:')) {
+          handleDataPayload(trimmed.slice(5));
+        }
+      }
+    }
+    if (buffer.trim().startsWith('data:')) {
+      handleDataPayload(buffer.trim().slice(5));
+    }
+
+    const tool_calls = flushToolCalls();
+    if (usage) onEvent({ type: 'usage', usage });
+
+    return {
+      message: {
+        role,
+        content: content || null,
+        tool_calls,
+      },
+      usage,
+    };
   }
 }

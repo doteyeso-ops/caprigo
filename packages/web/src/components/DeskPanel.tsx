@@ -127,6 +127,8 @@ export function DeskPanel({
   const [scriptPick, setScriptPick] = useState<Record<string, string>>({});
   const [recipes, setRecipes] = useState<WorkflowRecipe[]>(() => loadWorkflowRecipes());
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
+  const [recipesHudOpen, setRecipesHudOpen] = useState(false);
+  const [crewHudOpen, setCrewHudOpen] = useState(true);
   const [recipeDraft, setRecipeDraft] = useState<{
     name: string;
     templateId: WorkflowTemplateId;
@@ -510,6 +512,14 @@ export function DeskPanel({
           )}
         </div>
         <div className="rb-ow__toolbar-actions">
+          <button type="button" className="rb-btn" onClick={() => setRecipesHudOpen(open => !open)}>
+            {recipesHudOpen ? 'Hide recipes' : 'Show recipes'}
+          </button>
+          {selectedCrew && (
+            <button type="button" className="rb-btn" onClick={() => setCrewHudOpen(open => !open)}>
+              {crewHudOpen ? 'Hide crew HUD' : 'Show crew HUD'}
+            </button>
+          )}
           <button type="button" className="rb-btn" onClick={onOpenWorkflowLibrary}>
             Workflow library
           </button>
@@ -518,12 +528,25 @@ export function DeskPanel({
           </button>
         </div>
       </header>
-      <section className="rb-ow__recipes">
-        <div className="rb-ow__recipes-head">
-          <strong>Workflow Recipes</strong>
-          <span className="rb-muted">Saved orchestrator presets with optional trigger metadata and lead instructions.</span>
-        </div>
-        <div className="rb-ow__recipes-grid">
+      <div className="rb-ow__stage">
+        <section
+          className={`rb-ow__hud rb-ow__hud--recipes${recipesHudOpen ? '' : ' rb-ow__hud--collapsed'}`}
+          aria-label="Workflow recipes"
+        >
+          <div className="rb-ow__hud-head">
+            <div className="rb-ow__recipes-head">
+              <strong>Workflow Recipes</strong>
+              <span className="rb-muted">
+                Saved orchestrator presets with optional trigger metadata and lead instructions.
+              </span>
+            </div>
+            <button type="button" className="rb-icon-btn" onClick={() => setRecipesHudOpen(open => !open)}>
+              {recipesHudOpen ? 'Collapse' : 'Expand'}
+            </button>
+          </div>
+          {recipesHudOpen && (
+            <div className="rb-ow__hud-body">
+              <div className="rb-ow__recipes-grid">
           <div className="rb-ow__recipe-editor">
             <label className="rb-ow__recipe-field">
               <span>Name</span>
@@ -594,52 +617,58 @@ export function DeskPanel({
               )}
             </div>
           </div>
-          <div className="rb-ow__recipe-list">
-            {recipes.length === 0 ? (
-              <p className="rb-muted">No recipes yet. Save one to reuse orchestrator workflows.</p>
-            ) : (
-              recipes.map(recipe => {
-                const flow = WORKFLOW_LIBRARY.find(item => item.id === recipe.templateId);
-                return (
-                  <article key={recipe.id} className="rb-ow__recipe-card">
-                    <div>
-                      <strong>{recipe.name}</strong>
-                      <div className="rb-muted">{flow?.title ?? recipe.templateId}</div>
-                    </div>
-                    <div className="rb-ow__recipe-meta">
-                      <span>Trigger: {recipe.triggerKind}</span>
-                      {recipe.triggerValue && <span>{recipe.triggerValue}</span>}
-                    </div>
-                    <div className="rb-ow__recipe-card-actions">
-                      <button
-                        type="button"
-                        className="rb-btn rb-btn--accent rb-btn--tight"
-                        onClick={() =>
-                          void onLaunchCrew(recipe.templateId, {
-                            recipeName: recipe.name,
-                            leadInstructionsMarkdown: recipe.leadInstructionsMarkdown,
-                          })
-                        }
-                      >
-                        Launch
-                      </button>
-                      <button type="button" className="rb-icon-btn" onClick={() => beginEditRecipe(recipe)}>
-                        Edit
-                      </button>
-                      <button type="button" className="rb-icon-btn rb-icon-btn--danger" onClick={() => deleteRecipe(recipe.id)}>
-                        Delete
-                      </button>
-                    </div>
-                  </article>
-                );
-              })
-            )}
-          </div>
-        </div>
-      </section>
+                <div className="rb-ow__recipe-list">
+                  {recipes.length === 0 ? (
+                    <p className="rb-muted">No recipes yet. Save one to reuse orchestrator workflows.</p>
+                  ) : (
+                    recipes.map(recipe => {
+                      const flow = WORKFLOW_LIBRARY.find(item => item.id === recipe.templateId);
+                      return (
+                        <article key={recipe.id} className="rb-ow__recipe-card">
+                          <div>
+                            <strong>{recipe.name}</strong>
+                            <div className="rb-muted">{flow?.title ?? recipe.templateId}</div>
+                          </div>
+                          <div className="rb-ow__recipe-meta">
+                            <span>Trigger: {recipe.triggerKind}</span>
+                            {recipe.triggerValue && <span>{recipe.triggerValue}</span>}
+                          </div>
+                          <div className="rb-ow__recipe-card-actions">
+                            <button
+                              type="button"
+                              className="rb-btn rb-btn--accent rb-btn--tight"
+                              onClick={() =>
+                                void onLaunchCrew(recipe.templateId, {
+                                  recipeName: recipe.name,
+                                  leadInstructionsMarkdown: recipe.leadInstructionsMarkdown,
+                                })
+                              }
+                            >
+                              Launch
+                            </button>
+                            <button type="button" className="rb-icon-btn" onClick={() => beginEditRecipe(recipe)}>
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="rb-icon-btn rb-icon-btn--danger"
+                              onClick={() => deleteRecipe(recipe.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
       {workspaceNotice && (
         <section
-          className={`rb-ow__notice rb-ow__notice--${workspaceNotice.tone}`}
+          className={`rb-ow__notice rb-ow__notice--hud rb-ow__notice--${workspaceNotice.tone}`}
           aria-live="polite"
         >
           <div className="rb-ow__notice-copy">
@@ -672,8 +701,8 @@ export function DeskPanel({
           )}
         </section>
       )}
-      {selectedCrew && (
-        <section className="rb-ow__crew-strip" aria-label="Selected crew">
+        {selectedCrew && crewHudOpen && (
+        <section className="rb-ow__hud rb-ow__hud--crew rb-ow__crew-strip" aria-label="Selected crew">
           <div className="rb-ow__crew-strip-main">
             <span className="rb-ow__crew-strip-label">Selected crew</span>
             <div className="rb-ow__crew-strip-title-row">
@@ -1015,6 +1044,7 @@ export function DeskPanel({
             );
           })}
         </div>
+      </div>
       </div>
 
       {ctxMenu && (

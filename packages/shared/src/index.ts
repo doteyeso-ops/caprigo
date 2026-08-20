@@ -6,6 +6,13 @@ export { caprigoDataRoot } from './caprigo-paths';
 export { caprigoEnv } from './caprigo-env';
 export { caprigoWorkspaceRoot, resolvePathUnderWorkspaceRoot } from './caprigo-workspace';
 export {
+  recordFileChange,
+  readFileLedgerTail,
+  summarizeTouchedFiles,
+  type FileLedgerEntry,
+  type FileLedgerAction,
+} from './file-ledger';
+export {
   caprigoPermissionsPath,
   caprigoPermissions,
   resolveCaprigoToolPath,
@@ -83,10 +90,23 @@ export interface AgentConfig {
   ollamaNumCtx?: number;
   /** Laptop-first resource mode: caps context/outputs and reduces tool-loop pressure. */
   laptopMode?: boolean;
+  /**
+   * Long-horizon CLI harness mode: high tool/mission iteration budgets for
+   * multi-step coding and computer-use missions (Hermes-style keep-going).
+   * Ignored when laptopMode is on.
+   */
+  harnessMode?: boolean;
+  /** Override max tool rounds per turn (default 8, harness 48, laptop 4). */
+  maxToolIterations?: number;
+  /** Override mission STATE continue cycles when session has an objective. */
+  maxTaskIterations?: number;
 }
 
 /** Two fleet roles only: task agent vs orchestrator. */
 export type FleetAssignment = 'agent' | 'orchestrator';
+
+/** Durable task progress for a session objective. */
+export type TaskState = 'continue' | 'done' | 'blocked';
 
 /** Normalize legacy `standard` and missing role to `agent`. */
 export function normalizeFleetAssignment(role: string | undefined | null): FleetAssignment {
@@ -123,6 +143,18 @@ export interface Session {
   description?: string;
   /** Optional “what this agent is for” note; not the global engine system prompt. */
   objective?: string;
+  /** HOME harness mission kind when a plan is active this turn / session. */
+  homeMissionKind?: string;
+  /** HOME playbook id when matched (e.g. desktop_notepad_type). */
+  homePlaybookId?: string;
+  /** Timestamp when the current objective/task context started. Older messages are ignored in task mode. */
+  taskStartedAt?: number;
+  /** Explicit task progress for the current objective. */
+  taskState?: TaskState;
+  /** Short checkpoint note for the current objective. */
+  taskSummary?: string;
+  /** Last time the task checkpoint was updated. */
+  taskCheckpointAt?: number;
   /**
    * Preferred offline script id from the catalog (Workspace Run / builder).
    * Distinct from `assignedOfflineScripts`, which also records scripts after a successful run.
@@ -198,6 +230,11 @@ export interface UnifiedChatRequest {
   model: string;
   messages: UnifiedChatMessage[];
   tools?: unknown[];
+  /**
+   * OpenAI-compatible tool_choice. Use `"required"` on harness recovery/verify
+   * turns so local models must emit tool_calls instead of dumping code in chat.
+   */
+  toolChoice?: 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } };
   temperature?: number;
   maxTokens?: number;
   /** Ollama `num_ctx`; omit for APIs that only support `max_tokens`. */
@@ -210,11 +247,32 @@ export interface UnifiedChatResponse {
     content?: string | null;
     tool_calls?: UnifiedToolCall[];
   };
+  /** Optional token / timing stats from the backend (Ollama eval counts, etc.). */
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    durationMs?: number;
+  };
 }
+
+/** Stream chunk callback for backends that support token/think streaming. */
+export type ChatStreamEvent =
+  | { type: 'token'; text: string }
+  | { type: 'think'; text: string }
+  | { type: 'usage'; usage: NonNullable<UnifiedChatResponse['usage']> };
 
 /** Pluggable LLM: local Ollama or any OpenAI-compatible HTTP API. */
 export interface ChatLLMBackend {
   chat(request: UnifiedChatRequest): Promise<UnifiedChatResponse>;
+  /**
+   * Optional streaming chat. Accumulate a full UnifiedChatResponse while emitting
+   * token/think deltas (and final usage) via onEvent.
+   */
+  chatStream?(
+    request: UnifiedChatRequest,
+    onEvent: (e: ChatStreamEvent) => void
+  ): Promise<UnifiedChatResponse>;
   /** Short label for logging and /health (e.g. ollama, openai_compatible). */
   readonly providerId: string;
 }
@@ -231,12 +289,93 @@ export interface TaskActivity {
 
 /** Emitted during processMessage so the gateway/UI can show live task cards. */
 export type AgentActivityEvent =
-  | { type: 'task_start'; sessionId: string; taskId: string; label: string }
-  | { type: 'task_end'; sessionId: string; taskId: string; ok: boolean; detail?: string }
+  | {
+      type: 'status';
+      sessionId: string;
+      phase: 'thinking' | 'working' | 'streaming' | 'idle' | 'error';
+      detail?: string;
+    }
+  | { type: 'token'; sessionId: string; text: string }
+  | { type: 'think'; sessionId: string; text: string }
+  | {
+      type: 'task_start';
+      sessionId: string;
+      taskId: string;
+      label: string;
+      /** Tool name when known */
+      tool?: string;
+      /** Short args preview for HUD tool cards */
+      argsPreview?: string;
+      /** Absolute or workspace-relative path when the tool mutates/reads a file */
+      path?: string;
+    }
+  | {
+      type: 'task_end';
+      sessionId: string;
+      taskId: string;
+      ok: boolean;
+      detail?: string;
+      /** Short result summary for HUD tool cards */
+      summary?: string;
+    }
   | {
       type: 'orchestration_exchange';
       fromSessionId: string;
       toSessionId: string;
       kind: string;
       excerpt: string;
+    }
+  | {
+      type: 'stumble_retry';
+      sessionId: string;
+      signature: string;
+      count: number;
+      escalate: boolean;
+    }
+  | {
+      type: 'lesson_saved';
+      sessionId: string;
+      signature: string;
+    }
+  | {
+      type: 'dialect_flip';
+      sessionId: string;
+      from: string;
+      to: string;
+      reason: string;
+    }
+  | {
+      type: 'mission_compiled';
+      sessionId: string;
+      kind: string;
+      playbookId?: string;
+      objective: string;
+    }
+  | {
+      type: 'mission_bootstrap';
+      sessionId: string;
+      tool: string;
+      ok: boolean;
+    }
+  | {
+      type: 'mission_action';
+      sessionId: string;
+      tool: string;
+      source: 'card' | 'auto' | 'propose';
+    }
+  | {
+      type: 'mission_verified';
+      sessionId: string;
+      status: 'pass' | 'continue' | 'blocked';
+      detail: string;
+    }
+  | {
+      type: 'steer';
+      sessionId: string;
+      text: string;
+    }
+  | {
+      type: 'bug_report';
+      sessionId: string;
+      path: string;
     };

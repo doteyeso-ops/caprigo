@@ -72,6 +72,27 @@ export function muted(s: string): string {
   return `${C.gray}${s}${C.reset}`;
 }
 
+export function think(s: string): string {
+  return `${C.magenta}${C.dim}${s}${C.reset}`;
+}
+
+export function reply(s: string): string {
+  return `${C.bold}${s}${C.reset}`;
+}
+
+export function tool(s: string): string {
+  return `${C.yellow}${s}${C.reset}`;
+}
+
+export function soft(s: string): string {
+  return `${C.cyan}${s}${C.reset}`;
+}
+
+export function italic(s: string): string {
+  // ANSI italic (not all terminals); fall back to dim
+  return useColor() ? `\x1b[3m${C.dim}${s}${C.reset}` : dim(s);
+}
+
 export function trunc(s: string, max: number): string {
   if (s.length <= max) return s;
   if (max <= 3) return s.slice(0, max);

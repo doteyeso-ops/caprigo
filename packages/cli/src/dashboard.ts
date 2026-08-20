@@ -1,4 +1,4 @@
-import { framedSection, bold, ok, bad, muted, brandHeader } from './style';
+import { framedSection, bold, ok, bad, muted, brandHeader, dim } from './style';
 import { gatewayJson, getGatewayUrl } from './gateway-client';
 
 interface Health {
@@ -100,7 +100,8 @@ export async function runDashboard(): Promise<void> {
       `${bold('caprigo open')}          ${muted('Open Overview in the browser')}`,
       `${bold('caprigo agents list')}   ${muted('Inspect the fleet')}`,
       `${bold('caprigo agents create')} ${muted('--name "Reviewer"')}`,
-      `${bold('caprigo chat')}          ${muted('<id> -m "Summarize package.json"')}`,
+      `${bold('caprigo chat')}          ${muted('<id>')}  ${dim('(interactive) or -m "msg"')}`,
+      `${bold('caprigo files')}         ${muted('')}  ${dim('files Caprigo edited')}`,
       `${bold('caprigo skills')}        ${muted('Review the tool catalog')}`,
       `${bold('caprigo models')}        ${muted('Probe the active model source')}`,
       `${bold('caprigo onboard')}       ${muted('Print the setup path')}`,

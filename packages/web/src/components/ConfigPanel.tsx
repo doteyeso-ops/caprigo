@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { AgentCardModel, HealthPayload, RuntimePayload, SkillListItem } from '../types';
+import type { AgentCardModel, HealthPayload, MemoryEntry, MemoryPayload, RuntimePayload, SkillListItem } from '../types';
 import { OpenAiBaseExamplesList } from './OpenAiBaseExamplesList';
 import type { SystemMonitorPayload } from './SystemMonitorWidget';
 import { WORKFLOW_LIBRARY, type WorkflowTemplateId } from './workflows';
@@ -64,10 +64,16 @@ export function ConfigPanel({
   const [vibesInstallMsg, setVibesInstallMsg] = useState<string | null>(null);
   const [monitor, setMonitor] = useState<SystemMonitorPayload | null>(null);
   const [monitorErr, setMonitorErr] = useState<string | null>(null);
+  const [memoryOpen, setMemoryOpen] = useState(true);
+  const [memoryQuery, setMemoryQuery] = useState('');
+  const [memory, setMemory] = useState<MemoryEntry[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
+  const [memoryErr, setMemoryErr] = useState<string | null>(null);
 
   const llm = health?.llm;
   const vibes = health?.vibes;
   const provider = String(runtime?.llmProvider || llm?.provider || '').toLowerCase();
+  const remoteGpuBackend = provider === 'openai_compatible' || provider === 'openai';
 
   const ollamaOk = llm?.provider === 'ollama' ? llm?.ollama === 'ok' : null;
   const openaiOk = llm?.provider === 'openai_compatible' ? llm?.openai === 'ok' : null;
@@ -187,6 +193,28 @@ export function ConfigPanel({
   const marketplaceReady = !!vibes?.api_base;
   const marketplaceStatus = marketplaceSkillCount > 0 ? 'Imported' : 'Ready to import';
   const latestMarketplaceSkill = marketplaceSkills[0] ?? null;
+  const loadMemory = async (query: string) => {
+    setMemoryLoading(true);
+    setMemoryErr(null);
+    try {
+      const q = query.trim();
+      const url = `/api/memory?limit=8${q ? `&q=${encodeURIComponent(q)}` : ''}`;
+      const r = await fetch(url);
+      const d = (await r.json()) as MemoryPayload;
+      if (!r.ok) throw new Error(d.error || `Memory fetch failed (${r.status})`);
+      setMemory(Array.isArray(d.entries) ? d.entries : []);
+    } catch (e) {
+      setMemory([]);
+      setMemoryErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMemoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadMemory('');
+  }, []);
+
   const recommendedMove = !backendReady
     ? {
         title: 'Finish runtime connection',
@@ -194,7 +222,15 @@ export function ConfigPanel({
         actionLabel: 'Open Settings',
         actionKind: 'settings' as const,
       }
-    : agentCount === 0
+    : remoteGpuBackend
+      ? {
+          title: 'Use the rented GPU for market discovery',
+          detail:
+            'The remote endpoint is ready. Launch a niche scouting crew to rank opportunities by demand, competition, and repeatability.',
+          actionLabel: 'Launch Niche Scout Crew',
+          actionKind: 'niche-scout-crew' as const,
+        }
+      : agentCount === 0
       ? {
           title: 'Create the first focused agent',
           detail: 'Start with one worker or launch a small starter crew once runtime and model checks are healthy.',
@@ -241,6 +277,10 @@ export function ConfigPanel({
     }
     if (recommendedMove.actionKind === 'pr-review-crew') {
       void onLaunchCrew('pr-review');
+      return;
+    }
+    if (recommendedMove.actionKind === 'niche-scout-crew') {
+      void onLaunchCrew('niche-scout');
       return;
     }
     if (recommendedMove.actionKind === 'marketplace-research') {
@@ -686,6 +726,73 @@ export function ConfigPanel({
         )}
         {vibesInstallMsg && (
           <p className={vibesInstallMsg.startsWith('Installed') ? 'rb-skill-add__ok' : 'rb-skill-add__err'}>{vibesInstallMsg}</p>
+        )}
+      </div>
+
+      <div className="rb-config__card rb-config__card--memory">
+        <div className="rb-config__card-head">
+          <div>
+            <h3 className="rb-config__h">Memory</h3>
+            <p className="rb-muted">Persistent task notes and lessons learned.</p>
+          </div>
+          <button type="button" className="rb-btn rb-btn--ghost" onClick={() => setMemoryOpen(v => !v)}>
+            {memoryOpen ? 'Hide' : 'Show'}
+          </button>
+        </div>
+        {memoryOpen && (
+          <>
+            <div className="rb-vibes-search rb-vibes-search--tight">
+              <input
+                className="rb-input"
+                placeholder="Search memory (lesson, niche, blocker)..."
+                value={memoryQuery}
+                onChange={e => setMemoryQuery(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && void loadMemory(memoryQuery)}
+              />
+              <button type="button" className="rb-btn rb-btn--accent" disabled={memoryLoading} onClick={() => void loadMemory(memoryQuery)}>
+                {memoryLoading ? 'Loading…' : 'Search'}
+              </button>
+              <button
+                type="button"
+                className="rb-btn rb-btn--ghost"
+                disabled={memoryLoading}
+                onClick={() => {
+                  setMemoryQuery('');
+                  void loadMemory('');
+                }}
+              >
+                Reset
+              </button>
+            </div>
+            {memoryErr && <p className="rb-skill-add__err">{memoryErr}</p>}
+            {!memoryErr && memory.length === 0 && <p className="rb-muted">No memory entries yet.</p>}
+            {memory.length > 0 && (
+              <ul className="rb-memory-list">
+                {memory.map(item => {
+                  const value = item.value as {
+                    state?: string;
+                    summary?: string;
+                    objective?: string;
+                    description?: string;
+                    agentName?: string;
+                  };
+                  return (
+                    <li key={item.key} className="rb-memory-item">
+                      <div className="rb-memory-item__head">
+                        <strong className="rb-mono">{item.key}</strong>
+                        <span className="rb-muted">{new Date(item.timestamp).toLocaleString()}</span>
+                      </div>
+                      <p className="rb-memory-item__summary">{value.summary || value.objective || value.description || 'Saved memory entry'}</p>
+                      <p className="rb-memory-item__meta">
+                        <span className="rb-muted">State</span> {value.state || 'continue'}
+                        {value.agentName ? <><span className="rb-muted"> · Agent</span> {value.agentName}</> : null}
+                      </p>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </>
         )}
       </div>
 

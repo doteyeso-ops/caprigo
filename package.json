@@ -17,9 +17,12 @@
     "caprigo": "node packages/cli/dist/index.js",
     "launch": "npm run build && npm run build:web && npm run start",
     "imported-hermes:footers": "node scripts/append-imported-hermes-caprigo-footers.mjs",
-    "hermes:footers": "npm run imported-hermes:footers"
+    "hermes:footers": "npm run imported-hermes:footers",
+    "seed:demo": "node scripts/seed-demo-crew.cjs --reset",
+    "screenshots": "node scripts/capture-marketing-screenshots.cjs"
   },
   "engines": {
     "node": ">=18.0.0"
-  }
+  },
+  "license": "MIT"
 }

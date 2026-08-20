@@ -36,6 +36,17 @@ function saveStore(): void {
   }
 }
 
+export function invalidateMemoryCache(): void {
+  cache = null;
+}
+
+/** Upsert a key without going through the skill (used by Caprigo Brain sync). */
+export function upsertMemoryKey(key: string, value: unknown): void {
+  const store = loadStore();
+  store[key] = { value, timestamp: Date.now() };
+  saveStore();
+}
+
 export const storeMemorySkill: Skill = {
   name: 'store_memory',
   description:
@@ -81,7 +92,8 @@ export const listMemoryKeysSkill: Skill = {
   description: 'List all keys in persistent memory',
   toolParameters: {
     type: 'object',
-    additionalProperties: true,
+    properties: {},
+    additionalProperties: false,
   },
   execute: async () => {
     const store = loadStore();

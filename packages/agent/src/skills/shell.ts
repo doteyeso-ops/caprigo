@@ -17,7 +17,7 @@ function executeDisabled(): boolean {
 export const executeCommandSkill: Skill = {
   name: 'execute_command',
   description:
-    'Run a shell command on the machine hosting Caprigo (same user as the gateway). Windows: PowerShell is common (`powershell -NoProfile -Command "..."` or `cmd /c ...`); Linux/macOS: bash/sh. Use for git, package managers, scripts, system utilities. For quick facts use `web_search`; for reading a page use `web_fetch`. Long interactive TUIs may not work — prefer one-shot commands.',
+    'Run a shell/terminal command on the Caprigo host (git, package managers, scripts, system utilities, launching apps like notepad). Windows: PowerShell (`powershell -NoProfile -Command "..."`) or `cmd /c`. Prefer this for terminal work — do not type shell commands into random windows via desktop_type unless the user asks for OS UI. For mouse/keyboard on native apps use desktop_*; for web pages use browser_*. Long interactive TUIs may not work — prefer one-shot commands.',
   executionType: 'local',
   toolParameters: {
     type: 'object',

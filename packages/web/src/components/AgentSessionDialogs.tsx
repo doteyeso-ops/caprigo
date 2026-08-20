@@ -622,6 +622,20 @@ export function AgentDetailsDialog({
               </ul>
             )}
           </dd>
+          <dt>Task progress</dt>
+          <dd>
+            {agent.objective?.trim() ? (
+              <div className="rb-dialog__task-progress">
+                <div>
+                  <strong>{agent.taskState || 'continue'}</strong>
+                  <span className="rb-muted"> · {agent.taskCheckpointAt ? new Date(agent.taskCheckpointAt).toLocaleString() : 'not checkpointed yet'}</span>
+                </div>
+                <p>{agent.taskSummary?.trim() || agent.objective.trim()}</p>
+              </div>
+            ) : (
+              <span className="rb-muted">No objective set</span>
+            )}
+          </dd>
           <dt>Activity tasks</dt>
           <dd>
             {agent.tasks.length === 0 ? (

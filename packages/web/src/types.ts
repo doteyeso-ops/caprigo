@@ -5,6 +5,8 @@ export interface TaskRow {
   permissionWait?: boolean;
 }
 
+export type TaskState = 'continue' | 'done' | 'blocked';
+
 /** Catalog entry from GET /api/offline-scripts (disk scripts, no LLM). */
 export interface LocalScriptItem {
   id: string;
@@ -39,6 +41,12 @@ export interface AgentCardModel {
   description?: string;
   /** Optional “what this agent is for” (UI only; not the global engine system prompt). */
   objective?: string;
+  /** Explicit task progress for the current objective. */
+  taskState?: TaskState;
+  /** Short checkpoint note for the current objective. */
+  taskSummary?: string;
+  /** Last time the task checkpoint was updated. */
+  taskCheckpointAt?: number;
   /** Markdown path relative to gateway workspace; merged into LLM system prompt for this agent. */
   agentInstructionsPath?: string;
   /** Inline markdown task / playbook for this agent (LLM system prompt). */
@@ -171,5 +179,18 @@ export interface ExecutionTraceTotals {
   estimatedTotalTokens?: number;
   pressure?: 'light' | 'watch' | 'heavy';
   costSignal?: 'low' | 'watch' | 'high';
+}
+
+export interface MemoryEntry {
+  key: string;
+  timestamp: number;
+  value: unknown;
+}
+
+export interface MemoryPayload {
+  entries: MemoryEntry[];
+  count: number;
+  query?: string;
+  error?: string;
 }
 

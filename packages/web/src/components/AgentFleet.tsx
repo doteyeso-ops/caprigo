@@ -58,11 +58,11 @@ export function AgentFleet({
     <section className="rb-fleet" aria-labelledby="fleet-heading">
       <div className="rb-fleet__intro">
         <h2 id="fleet-heading" className="rb-fleet__title">
-          Agent fleet
+          Crew roster
         </h2>
         <p className="rb-fleet__subtitle">
-          Persistent agents for chat, tools, local scripts, and orchestration. Build a small crew around concrete
-          outcomes, not generic conversations.{' '}
+          Persistent workers for chat, tools, local scripts, and orchestration. Build around concrete outcomes, not
+          generic conversations.{' '}
           <button type="button" className="rb-inline-link" onClick={onOpenBuilder}>
             New agent
           </button>
@@ -70,12 +70,12 @@ export function AgentFleet({
         {agents.length > 0 && (
           <div className="rb-fleet__stats" aria-label="Fleet summary">
             <span className="rb-fleet__stat">{agents.length} total</span>
-            <span className="rb-fleet__stat">{summary.llm} LLM</span>
-            <span className="rb-fleet__stat">{summary.offline} offline</span>
+            <span className="rb-fleet__stat">{summary.llm} live</span>
+            <span className="rb-fleet__stat">{summary.offline} local</span>
             <span className="rb-fleet__stat">
               {summary.orchestrators} orchestrator{summary.orchestrators === 1 ? '' : 's'}
             </span>
-            <span className="rb-fleet__stat">{summary.thinking} active</span>
+            <span className="rb-fleet__stat">{summary.thinking} working</span>
           </div>
         )}
       </div>

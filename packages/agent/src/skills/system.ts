@@ -1,5 +1,10 @@
 import * as os from 'os';
 import { Skill } from '@caprigo/shared';
+import {
+  clipboardReadSkill,
+  clipboardWriteSkill,
+  listLanDevicesSkill,
+} from './network';
 
 export const currentDateTimeSkill: Skill = {
   name: 'current_datetime',
@@ -43,4 +48,10 @@ export const systemInfoSkill: Skill = {
   },
 };
 
-export const systemSkills: Skill[] = [currentDateTimeSkill, systemInfoSkill];
+export const systemSkills: Skill[] = [
+  currentDateTimeSkill,
+  systemInfoSkill,
+  listLanDevicesSkill,
+  clipboardReadSkill,
+  clipboardWriteSkill,
+];

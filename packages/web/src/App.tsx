@@ -71,7 +71,17 @@ export default function App() {
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [health, setHealth] = useState<HealthPayload | null>(null);
   const [runtime, setRuntime] = useState<RuntimePayload | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'workspace' | 'chat' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'workspace' | 'chat' | 'settings'>(() => {
+    try {
+      const tab = new URLSearchParams(window.location.search).get('tab');
+      if (tab === 'workspace' || tab === 'board') return 'workspace';
+      if (tab === 'chat' || tab === 'session') return 'chat';
+      if (tab === 'settings') return 'settings';
+    } catch {
+      /* ignore */
+    }
+    return 'dashboard';
+  });
   const [localScripts, setLocalScripts] = useState<LocalScriptItem[]>([]);
   const [localScriptsDir, setLocalScriptsDir] = useState<string | null>(null);
   const [offlineRunningId, setOfflineRunningId] = useState<string | null>(null);
@@ -397,6 +407,53 @@ export default function App() {
               runtimeMode: 'llm',
               draft:
                 'What is shipping:\n\nWho this is for:\n\nKnown risks or weak spots:\n\nAsk Surface Checker to inspect the visible user journey and ask Risk Reviewer to rank the top blockers before release.',
+            },
+          });
+        } else if (templateId === 'niche-scout') {
+          const orchestrator = await createSessionRaw({
+            displayName: 'Niche Scout Lead',
+            description: 'Coordinates market discovery and repeatable business validation using a remote GPU-backed model.',
+            objective:
+              'Find a narrow, ethically sellable niche with real demand, clear pain, and a repeatable offer. Rank opportunities by evidence, competition, and ease of execution.',
+            runtimeMode: 'llm',
+            agentRole: 'orchestrator',
+            ...leadInstructionPatch,
+          });
+          await createSessionRaw({
+            displayName: 'Market Scout',
+            description: 'Maps candidate markets, pain points, and competitor signals.',
+            objective:
+              'Gather evidence for underserved niches, recurring pain points, and obvious competitor gaps. Return concise candidates with sources and why they might pay.',
+            runtimeMode: 'llm',
+            agentRole: 'agent',
+            linkedOrchestratorId: orchestrator.id,
+          });
+          await createSessionRaw({
+            displayName: 'Validation Analyst',
+            description: 'Checks willingness to pay, repeatability, and first offer shape.',
+            objective:
+              'Score the strongest niche candidates for willingness to pay, buyer accessibility, repeatability, and delivery effort. Recommend the shortest path to a first sellable offer.',
+            runtimeMode: 'llm',
+            agentRole: 'agent',
+            linkedOrchestratorId: orchestrator.id,
+          });
+          setSelectedId(orchestrator.id);
+          setWorkspaceNotice({
+            title: options?.recipeName ? `${options.recipeName} launched` : 'Niche Scout Crew launched',
+            detail:
+              'Niche Scout Lead, Market Scout, and Validation Analyst are linked and ready. Start by giving the lead the market area, constraints, and profit target.',
+            tone: 'success',
+            checklist: [
+              'Open Niche Scout Lead in Session and define the market area, budget, and what profitable must mean.',
+              'Ask Market Scout to return a short list of underserved niches with evidence and sources.',
+              'Ask Validation Analyst to rank the best niche by demand, competition, repeatability, and first offer path.',
+            ],
+            primaryAction: {
+              label: 'Open lead session',
+              agentId: orchestrator.id,
+              runtimeMode: 'llm',
+              draft:
+                'Market area or audience:\n\nBudget / constraints:\n\nWhat profitable means here:\n\nAsk Market Scout for the best niche candidates first, then ask Validation Analyst to rank them by demand, competition, and repeatability.',
             },
           });
         } else {

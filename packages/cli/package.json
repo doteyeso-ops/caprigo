@@ -7,6 +7,8 @@
     "build": "tsc"
   },
   "dependencies": {
+    "@caprigo/agent": "*",
+    "@caprigo/chat-backend": "*",
     "@caprigo/shared": "*",
     "commander": "^11.1.0"
   },

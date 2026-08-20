@@ -126,6 +126,28 @@ export function WorkspacePanel({
         ) : (
           <p className="rb-workspace__sub rb-muted">Create an agent from Overview, then open its Session here.</p>
         )}
+        {selected?.objective?.trim() && (
+          <div className="rb-workspace__task-banner">
+            <span className="rb-workspace__task-banner-label">Task</span>
+            <strong className="rb-workspace__task-banner-title">
+              {selected.taskState === 'done'
+                ? 'Done'
+                : selected.taskState === 'blocked'
+                  ? 'Blocked'
+                  : 'Persistent loop active'}
+            </strong>
+            <span className={`rb-workspace__task-state rb-workspace__task-state--${selected.taskState || 'continue'}`}>
+              State: {selected.taskState || 'continue'}
+            </span>
+            <span className="rb-workspace__task-banner-copy">{selected.objective.trim()}</span>
+            {selected.taskSummary?.trim() && (
+              <span className="rb-workspace__task-banner-copy rb-workspace__task-banner-copy--muted">
+                Checkpoint: {selected.taskSummary.trim()}
+              </span>
+            )}
+            <span className="rb-muted">This session should keep iterating until it reports done or blocked.</span>
+          </div>
+        )}
         {workflowContext && (
           <div className="rb-workspace__workflow">
             <span className="rb-workspace__workflow-label">{workflowContext.workflow.title}</span>

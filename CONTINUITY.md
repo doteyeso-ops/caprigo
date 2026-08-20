@@ -4,14 +4,47 @@
 
 | Name | What it is |
 |------|----------------|
-| **Caprigo** | Main product (UX, positioning, this repo as a whole). |
-| **Caprigo Core** | Runtime engine: LLM backends, skills, sessions, gateway (`@caprigo/*` packages). |
-| **Caprigo CLI** | `caprigo` command. |
+| **Caprigo** | Local-first **CLI+TUI agent harness** for LM Studio (Hermes-competitive long-horizon tool loops). |
+| **Caprigo Core** | Runtime engine: LLM backends, skills, sessions (`@caprigo/*`). |
+| **Caprigo CLI** | `caprigo` — embedded TUI by default; `caprigo serve` optional gateway. |
 | **Caprigo Mesh** | Agent networking / federation — **future**, not implemented here yet. |
 
 ## Overview
 
-Caprigo is a **local-first agent platform**: you add skills, **Caprigo Core** runs them. Think “game engine for agents.”
+**Pivot (2026-08-11, branch `feat/lmstudio-cli-harness`):** Caprigo is no longer Board/Ollama-first. Default provider is **LM Studio** via OpenAI-compatible `http://127.0.0.1:1234/v1`. Embedded TUI runs Agent in-process. Harness mode enables high tool/mission iteration budgets + `/loop` missions (`STATE: continue|done|blocked`). **Digital body:** shell (`execute_command`), browser (Playwright `browser_*`), and first-party Windows **desktop_*** (mouse/keyboard/screenshot via PowerShell Win32). Kill switch `CAPRIGO_DISABLE_DESKTOP=1`. Windows-MCP remains optional richer UIA later — HUD does not load MCP.
+
+**HOME (2026-08-11):** Harness-Owned Mission Executor. Intent → MissionPlan → bootstrap skills **before** first LLM reply → Action Cards / auto-pick → acceptance `verifyMission` (not model STATE). Playbooks: notepad type, web answer, write HTML. Modules: `harness-mission.ts`, `action-card.ts`. Disable with `CAPRIGO_HOME=0`. Caps **Mission**. Smoke `scripts/smoke-harness-mission.cjs`. **Loop fix:** skip already-attempted tools in `proposeNextActions`; one post-drain LLM wrap-up then stop; HOME never falls into `STATE: continue` churn (missing STATE no longer defaults to continue).
+
+**STEER + bugs (2026-08-11):** Double-Enter submit + mid-turn `steerTurn`. `/bug` packs under `~/.caprigo/bug-reports/`. Ambiguous tool lessons persist as `unknown:<requested>`. Scout: `scripts/scout-ecosystem.cjs`. Learning suite: `scripts/run-learning-suite.cjs` → `~/.caprigo/test-runs/`. Desktop focus hardened (rank titles, AttachThreadInput, click-into, paste type). HOME live notepad smoke: `smoke-e2e-home-notepad.cjs` (autodrain, 0 tokens).
+
+**Hermes parity (2026-08-11):** Studied [hermes-agent](https://github.com/NousResearch/hermes-agent) loop. Ported: session `todo` skill + mission-seeded checklist; narration-stop + empty-after-tools recovery nudges (`hermes-recovery.ts`). **HOME auto-drain** finishes playbooks without waiting for tool_calls. Default model: `qwen2.5-coder-7b-instruct`. **Prompt briefing:** Caprigo compresses fat tool JSON before LMS; optional `CAPRIGO_FAST_MODEL` (e.g. `google/gemma-3-4b`) for post-tool answer turns only.
+
+**Search routing (2026-08-11):** `web_search` = internet (Brave HTML default, no API key); `search_files` = local grep. Sticky Brain lessons + refusal nudge force web tools when the model claims ignorance. End-of-turn episodes reinforce success/fail.
+
+**Desktop body (2026-08-11):** Caps Desktop `ok|off|non-win`. Loop sticky lesson `os_ui_needs_desktop_screenshot_loop`. Smoke `scripts/smoke-desktop.cjs`.
+
+**Desktop OCR (2026-08-11):** Caps OCR `winrt|rapidocr|off`. Skills `desktop_ocr` / `desktop_find`; screenshot `ocr:true`. Default WinRT; optional RapidOCR venv (`scripts/setup-desktop-ocr.ps1`). Smoke `scripts/smoke-desktop-ocr.cjs`.
+
+Box-mini (`CAPRIGO_BOX_PROFILE=1`) still forces laptopMode (low budgets) for tiny boxes.
+
+Caprigo is a **local-first agent platform**: you add skills, **Caprigo Core** runs them. Think “game engine for agents,” shipped as a small CLI harness.
+
+Latest UI continuity note: the Board should stay **HUD-first**, not stacked-panel-first. Keep recipes, notices, and selected-crew context as docked/collapsible overlays so the canvas remains the primary operator surface on laptop-sized screens.
+
+Latest tooling continuity note: `LLM/train-llm-from-scratch` is now the experimental Caprigo training workspace. Keep its corpus constrained to Caprigo docs/code/usage text, treat `doteyeso-ops/caprigo` as the canonical repo source, and remember the current `caprigo_tooling_tiny.pt` checkpoint is only a smoke-test baseline.
+Training continuity note: the managed training entrypoint is now `scripts/caprigo_train_cli.py`. On this machine, the practical default is the CPU profile `config.caprigo_tooling_cpu_train`; status/logs/checkpoints should be read from `LLM/train-llm-from-scratch/runs/caprigo_tooling_cpu_train/` and `models/`.
+Stage-2 continuity note: stronger training currently means checkpoint continuation plus a more targeted corpus, not a new architecture. The live second-stage run uses `config.caprigo_tooling_stage2`, initializes from `models/caprigo_tooling_cpu_train.pt`, and writes status/logs/history/dashboard artifacts under `runs/caprigo_tooling_stage2/`.
+Pipeline continuity note: the durable method is now generic. Caprigo-specific scripts are wrappers, while the reusable core lives in `TRAINING_PIPELINE.md`, `profiles/`, `scripts/build_project_corpus.py`, `scripts/fetch_web_sources.py`, and `scripts/launch_next_stage.py`.
+Qwen continuity note: the preferred small real base model path is now `Qwen/Qwen3-0.6B` via Axolotl-style continued pretraining + SFT + DPO. Do not try to merge the Caprigo scratch-model weights into Qwen; reuse the corpora/datasets instead. Model-specific scaffolding lives in `QWEN3_0_6B_PATH.md`, `data/source_manifests/qwen0_6b_sources.json`, `scripts/fetch_qwen0_6b_sources.py`, and `posttraining/axolotl/qwen3_0_6b_*.example.yml`.
+Qwen router continuity note: treat `Qwen3-0.6B` as a strict local router/helper, not the main reasoning model. The Qwen SFT/DPO path should bias toward valid JSON, correct tool choice, ambiguity handling, and short dispatch outputs. Windows execution now assumes WSL2 for Axolotl helpers (`scripts/install_axolotl_wsl.ps1`, `scripts/run_axolotl_in_wsl.ps1`, `scripts/launch_qwen0_6b_*.ps1`).
+CPU continuity note: this laptop's WSL Axolotl environment reports `torch 2.8.0+cu128` but `cuda_available=False`, so current Qwen work is CPU-only. A CPU-safe smoke SFT path now exists and has been validated at `outputs/qwen3_0_6b_sft_smoke/`; full Qwen SFT/DPO runs are possible but will be much slower than a real WSL CUDA setup.
+Router-eval continuity note: the important metric for the Qwen router path is not fluent text but exact tool selection under valid-JSON constraints. A local holdout eval now exists in `posttraining/evals/qwen_tool_router_holdout.jsonl` and can be run through `scripts/run_qwen_router_eval.ps1`. Early comparison showed base Qwen and the 2-step smoke adapter both at `1/5` exact tool matches despite `5/5` valid JSON, which is why the expanded CPU SFT run was started under `runs/qwen3_0_6b_sft_cpu/`.
+Learning-monitor continuity note: the popup status view is now meant to be standardized across training families. Use `scripts/train_status_popup.py --run-name <run>` for both legacy scratch runs and Axolotl/WSL Qwen runs; the underlying parser now derives phase and activity from logs when no structured `status.json` exists.
+Qwen-result continuity note: the first full CPU SFT adapter at `outputs/qwen3_0_6b_sft_cpu/` is a working training artifact, not yet a good router. Holdout eval stayed at `1/5` exact tool matches while preserving `5/5` valid JSON, which means the next iteration should tighten tool names/schemas and ambiguity examples rather than just adding more of the same training steps.
+Closed-schema continuity note: the router path now has an explicit allowed-tool schema in `posttraining/tool_router_schema.json`. The important eval split is now 3-way: `valid_json`, `allowed_tool`, and `exact_tool_match`. Under that stricter eval prompt, the first CPU adapter improved to `6/8` exact matches, so the ontology tightening worked. The active follow-up run is `qwen3_0_6b_sft_cpu_v2`, trained on the closed-schema-expanded seed set.
+V2 continuity note: the `qwen3_0_6b_sft_cpu_v2` adapter materially improved routing to `7/8` exact tool matches on the 8-case holdout, but it also regressed slightly on raw JSON validity (`7/8`) because one no-arg tool case emitted malformed JSON. Next iteration should be a narrow formatting fix for empty/no-arg tool outputs rather than a broad retrain.
+V3 continuity note: after expanding the holdout to 10 cases, the remaining miss pattern is still isolated to malformed no-arg payloads. The active run `qwen3_0_6b_sft_cpu_v3` is a targeted no-arg formatting pass, not a broad ontology retrain. After it finishes, the next step is model testing rather than another major training redesign unless the no-arg cases still fail.
+Post-v3 continuity note: the no-arg-focused retrain did not improve beyond `8/10` on the 10-case holdout. At this point, the model is good enough to begin behavioral testing, and the remaining formatting misses are strong candidates for deterministic output repair or constrained decoding rather than more CPU-bound SFT loops.
 
 ## Key Differentiators
 
@@ -35,7 +68,7 @@ Caprigo is a **local-first agent platform**: you add skills, **Caprigo Core** ru
 
 7. **Vibes-Coded depth** — Beyond browse/manifest/install/delivery: `import-preview` / `import-action` (public + agent), `proof_of_use`, `affiliate_link`, `commerce_summary`. Optional skill metadata: `executionType`, `vibesListingId`. See Vibes-Coded docs for API parity notes.
 
-8. **Core tools (filesystem, web, host)** — Filesystem: `read_file` / `write_file` / `list_directory`, **`search_files`**, **`search_replace`** (Hermes / OpenClaw-style). **Web:** **`web_search`** (DuckDuckGo instant JSON, no API key), **`web_fetch`** (https GET → plain text / JSON), plus **`http_get`** / **`http_post`** (browser-like `User-Agent`, response size cap via `CAPRIGO_HTTP_MAX_BODY_BYTES`). **Host:** **`execute_command`** (shell on gateway host; optional `timeout_ms` up to 5m), **`system_info`** (OS, memory, paths). Opt out: **`CAPRIGO_DISABLE_WEB_TOOLS`**, **`CAPRIGO_DISABLE_EXECUTE_COMMAND`**. JS-rendered pages and true headless browsing are not built in — use **MCP** or user skills if needed.
+8. **Core tools (filesystem, web, host)** — Filesystem: `read_file` (default hash-annotated `NNN:hhh|line`) / `write_file` / `list_directory`, **`search_files`**, **`hash_edit`** (OMP-style anchors; preferred), **`search_replace`**. **Web:** **`web_search`** (DuckDuckGo instant JSON, no API key), **`web_fetch`** (https GET → plain text / JSON), plus **`http_get`** / **`http_post`** (browser-like `User-Agent`, response size cap via `CAPRIGO_HTTP_MAX_BODY_BYTES`). **Host:** **`execute_command`** (shell on gateway host; optional `timeout_ms` up to 5m), **`system_info`** (OS, memory, paths). Opt out: **`CAPRIGO_DISABLE_WEB_TOOLS`**, **`CAPRIGO_DISABLE_EXECUTE_COMMAND`**. JS-rendered pages and true headless browsing are not built in — use **MCP** or user skills if needed.
 
 9. **Web dashboard** — **Dashboard** tab: hero strip (agent/tool counts, LLM status, workspace path, primary **Create agent**), **Runtime setup** sidebar, **Agent fleet** grid. **Workspace** tab layout and behavior unchanged.
 
@@ -348,6 +381,16 @@ Stored in `integrations/mirofish/` — copy to `skills/mirofish` to enable.
   - Added quick-search chips, a marketplace readiness/import summary, and a compact installed-marketplace-tools list so users can see what Vibes-Coded has already added to Caprigo.
   - This was kept separate from MCP on purpose: Vibes-Coded remains the marketplace story, while MCP remains the integration/configuration story.
 - Overview workflow pass 1:
+- 2026-05-21 standalone Caprigo router test:
+  - Treat all Qwen/router work as experimental only; do not wire into the finished Caprigo product by default.
+  - Standalone install state found at `C:\Users\Laptop\.caprigo`; gateway was down during test, but home-state probing works.
+  - `scripts/run_caprigo_router_standalone_test.ps1` now supports `-CaprigoHome`, `-OutputPath`, and deterministic Windows->WSL path conversion.
+  - `scripts/test_caprigo_router_standalone.py` now reports standalone home state and repairs malformed no-arg tool outputs before JSON parsing.
+  - Latest saved standalone result: `LLM/train-llm-from-scratch/runs/standalone_caprigo_v3_eval.json`
+  - Latest `v3` standalone score with repair shim: `8/8` valid JSON, `8/8` allowed tools, `8/8` exact tool matches.
+  - Added test-only direct router CLI: `scripts/caprigo_router_test_cli.py` and `scripts/run_caprigo_router_cli.ps1`.
+  - Started the standalone Windows gateway successfully via repo `launch.ps1`; host-side `/health` and `/api/runtime` are good.
+  - Keep in mind: the adapter runs under WSL, and the current Windows gateway bind is localhost-only, so WSL-side runtime probing still reports unreachable even while the Windows host sees a healthy gateway.
   - Added a small action layer in Overview that recommends the next concrete move from current state instead of only showing status.
   - The card can now route users straight into Settings, the agent builder, a starter crew launch, or a Vibes-Coded search depending on what is missing.
   - This is still lightweight productization: it guides the existing flows rather than introducing a new onboarding engine or persistence model.
@@ -415,6 +458,12 @@ Stored in `integrations/mirofish/` — copy to `skills/mirofish` to enable.
   - default data root is now `~/.caprigo`
   - removed the leftover compatibility shims from the abandoned pre-launch name
 - Fixed the remaining legacy data-root leak. `caprigoDataRoot()` now prefers `~/.caprigo` unless `CAPRIGO_HOME` is explicitly set, and migrated legacy home data forward on this machine so `caprigo doctor` no longer reports the old branded path as Caprigo's active runtime root.
+- 2026-08-19 launch-pack pass:
+  - README rewritten for GitHub/social shareability with `docs/assets/` screenshots and link to `SOCIAL_LAUNCH.md`
+  - Added `scripts/seed-demo-crew.cjs` and `scripts/capture-marketing-screenshots.cjs` for repeatable marketing assets
+  - Board recipes HUD now defaults collapsed (canvas-first); removed auto tab jump to Board on load when agents exist
+  - Web supports `/?tab=overview|board|session|settings` deep links for demos and docs
+  - GitHub repo description/homepage pointed at caprigoai.com
 - [x] **In-process MCP client** — stdio servers, `mcp-servers.json`, `/api/mcp-servers`, Settings UI
 - [x] **Windows-MCP** — docs + example configs (`integrations/windows-mcp`)
 - 2026-04-27 website note:
@@ -428,3 +477,6 @@ Stored in `integrations/mirofish/` — copy to `skills/mirofish` to enable.
   - Build still passes: `npm run build` and `npm run build:web`.
   - Live API smoke passed against local gateway on `127.0.0.1:18789`: created offline session, ran `gateway-ping`, verified `/api/sessions/:id/execution-log` plus markdown/JSON export include `rationale`, `resultSummary`, `outputChars`, estimated tokens, pressure, and cost signal.
   - Visual UI smoke was completed outside Codex browser-use by using headless Edge against a temporary local verification build, then reverting those verification-only source edits. Confirmed Overview workflow-library / recommended-next-move rendering, and Board rendering for workflow recipes, selected crew strip, linked-worker shell, and `Heavy` trace badge. Keep in mind: Codex browser-use remains blocked on this machine until the `node_repl` runtime reaches `>=22.22.0`.
+- 2026-07-04 session pause:
+  - Stopped the live Caprigo gateway process and left the worktree at the task-context boundary fix.
+  - Resume point: verify a fresh task session no longer inherits stale messages, then finish trimming the remaining text-heavy create-agent/dashboard surfaces if needed.

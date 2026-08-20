@@ -9,7 +9,7 @@ export interface LaunchedAgentView {
   id: string;
   displayName: string;
   createdAt: number;
-  status: 'idle' | 'thinking' | 'error';
+  status: 'idle' | 'thinking' | 'working' | 'error';
   tasks: TaskActivity[];
   lastError?: string;
 }
@@ -82,10 +82,24 @@ export function handleAgentActivity(e: AgentActivityEvent): void {
     return;
   }
 
+  if (e.type === 'token' || e.type === 'think') {
+    return;
+  }
+
   const v = store.get(e.sessionId);
   if (!v) return;
 
+  if (e.type === 'status') {
+    if (e.phase === 'idle' || e.phase === 'thinking' || e.phase === 'working' || e.phase === 'error') {
+      setAgentStatus(e.sessionId, e.phase, e.phase === 'error' ? e.detail : undefined);
+    } else if (e.phase === 'streaming') {
+      setAgentStatus(e.sessionId, 'thinking');
+    }
+    return;
+  }
+
   if (e.type === 'task_start') {
+    v.status = 'working';
     v.tasks.push({
       taskId: e.taskId,
       status: e.label,
@@ -101,6 +115,10 @@ export function handleAgentActivity(e: AgentActivityEvent): void {
       if (!e.ok) {
         row.status = `${row.status} — ${e.detail || 'error'}`;
       }
+    }
+    const open = v.tasks.some(t => !t.done);
+    if (!open && v.status === 'working') {
+      v.status = 'thinking';
     }
   }
 }

@@ -9,7 +9,9 @@ import { runDashboard } from './dashboard';
 import { registerAgentCommands } from './agents-cli';
 import { openInBrowser } from './open-browser';
 import { framedSection, bold, dim, ok, warn, bad, table, trunc, titleLine } from './style';
-import { gatewayJson, gatewayPostJson, getGatewayUrl } from './gateway-client';
+import { gatewayJson, getGatewayUrl } from './gateway-client';
+import { chatOnce, chatRepl } from './chat-cli';
+import { runTui } from './tui';
 
 function setupLine(label: string, passed: boolean, detail: string): string {
   return `${passed ? ok('PASS') : warn('CHECK')}  ${label}  ${detail}`;
@@ -224,6 +226,22 @@ async function runDoctor(json = false): Promise<void> {
     lines.push(setupLine('Configured model', !!local.defaultModel, local.defaultModel || '(unset)'));
   }
 
+  try {
+    const { probeLmStudio, describeLmStudioTarget } = await import('./embedded-runtime');
+    const probe = await probeLmStudio();
+    lines.push(
+      setupLine(
+        'LM Studio',
+        probe.ok,
+        probe.ok
+          ? `${describeLmStudioTarget()} · ${probe.models.length} model(s)`
+          : `${describeLmStudioTarget()} · ${probe.error || 'unreachable'}`
+      )
+    );
+  } catch {
+    /* ignore */
+  }
+
   console.log('');
   console.log(titleLine('Caprigo - doctor'));
   console.log('');
@@ -233,9 +251,17 @@ async function runDoctor(json = false): Promise<void> {
   if (!gatewayUp) {
     console.log(
       framedSection('Gateway status', [
-        `Gateway is not reachable at ${gatewayUrl}.`,
-        'Start Caprigo with `npm run start`, `./launch.ps1`, or rerun `./setup.ps1 -Launch`.',
-        `Doctor can still confirm local files and paths without the gateway.`,
+        `Gateway is not required for embedded TUI (default).`,
+        `Optional: \`caprigo serve\` then \`caprigo tui --gateway\`.`,
+        `Daily path: start LM Studio → load a model → \`caprigo tui\`.`,
+      ])
+    );
+    console.log('');
+    console.log(
+      framedSection('Recommended use', [
+        'Use `caprigo setup --interactive` (pick LM Studio).',
+        'Use `caprigo tui` for the embedded agent harness.',
+        `Permissions live at ${permissionsPath}.`,
       ])
     );
     console.log('');
@@ -299,18 +325,23 @@ async function runInteractiveSetup(options: InteractiveSetupOptions = {}): Promi
     const providerChoice = await promptChoice(
       rl,
       'LLM backend',
-      ['ollama', 'openai'],
-      String(existing.CAPRIGO_LLM_PROVIDER || 'ollama').toLowerCase() === 'openai' ? 1 : 0
+      ['lmstudio (OpenAI-compatible local)', 'ollama', 'openai (remote API)'],
+      (() => {
+        const cur = String(existing.CAPRIGO_LLM_PROVIDER || 'openai_compatible').toLowerCase();
+        if (cur === 'ollama') return 1;
+        if (cur === 'openai' && !String(existing.OPENAI_BASE_URL || '').includes('1234')) return 2;
+        return 0;
+      })()
     );
 
     const nextEnv: Record<string, string> = {
       ...existing,
-      CAPRIGO_LLM_PROVIDER: providerChoice,
     };
 
     let discoveredModels: string[] = [];
 
-    if (providerChoice === 'ollama') {
+    if (providerChoice.startsWith('ollama')) {
+      nextEnv.CAPRIGO_LLM_PROVIDER = 'ollama';
       const ollamaUrl = await promptInput(
         rl,
         'Ollama URL',
@@ -331,30 +362,40 @@ async function runInteractiveSetup(options: InteractiveSetupOptions = {}): Promi
         console.log(warn('Could not list Ollama models right now. You can still enter one manually.'));
       }
     } else {
+      const isLmStudio = providerChoice.startsWith('lmstudio');
+      nextEnv.CAPRIGO_LLM_PROVIDER = 'openai_compatible';
       const apiBase = await promptInput(
         rl,
-        'OpenAI-compatible base URL',
-        existing.OPENAI_BASE_URL || 'https://api.openai.com/v1'
+        isLmStudio ? 'LM Studio base URL' : 'OpenAI-compatible base URL',
+        existing.OPENAI_BASE_URL ||
+          (isLmStudio ? 'http://127.0.0.1:1234/v1' : 'https://api.openai.com/v1')
       );
       const apiKey = await promptInput(
         rl,
-        'OpenAI-compatible API key',
+        isLmStudio ? 'API key (optional for LM Studio)' : 'OpenAI-compatible API key',
         existing.OPENAI_API_KEY || '',
         true
       );
       nextEnv.OPENAI_BASE_URL = apiBase;
       if (apiKey) nextEnv.OPENAI_API_KEY = apiKey;
       delete nextEnv.OLLAMA_URL;
+      nextEnv.CAPRIGO_HARNESS_MODE = existing.CAPRIGO_HARNESS_MODE || '1';
 
       try {
         discoveredModels = await fetchOpenAiModels(apiBase, apiKey);
         if (discoveredModels.length > 0) {
           console.log('');
-          console.log(`Detected ${discoveredModels.length} remote model(s).`);
+          console.log(`Detected ${discoveredModels.length} model(s).`);
         }
       } catch {
         console.log('');
-        console.log(warn('Could not list remote models right now. You can still enter one manually.'));
+        console.log(
+          warn(
+            isLmStudio
+              ? 'Could not reach LM Studio. Start the local server and load a model, then retry.'
+              : 'Could not list remote models right now. You can still enter one manually.'
+          )
+        );
       }
     }
 
@@ -466,13 +507,41 @@ async function runInteractiveSetup(options: InteractiveSetupOptions = {}): Promi
 
 program
   .name('caprigo')
-  .description('Caprigo CLI — same Core as the dashboard: fleet, skills, chat, runtime')
+  .description('Caprigo CLI — local LM Studio agent harness (TUI, tools, computer use)')
   .version('2.0.0', '-V, --version');
+
+program
+  .command('tui')
+  .alias('ui')
+  .description('Interactive agent TUI (embedded LM Studio harness by default)')
+  .argument('[sessionId]', 'Optional agent id / prefix (gateway mode only)')
+  .option('--gateway', 'Attach to Caprigo gateway instead of embedded runtime')
+  .action(async (sessionId?: string, opts?: { gateway?: boolean }) => {
+    try {
+      await runTui(sessionId, { gateway: !!opts?.gateway });
+    } catch (e: unknown) {
+      console.error(bad('Error:'), e instanceof Error ? e.message : e);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('serve')
+  .description('Start Caprigo gateway (optional HTTP API + web)')
+  .action(() => {
+    const gatewayEntry = path.join(__dirname, '../../gateway/dist/index.js');
+    console.log(dim('Starting gateway…'), gatewayEntry);
+    const child = spawn(process.execPath, [gatewayEntry], {
+      stdio: 'inherit',
+      env: process.env,
+    });
+    child.on('exit', code => process.exit(code ?? 0));
+  });
 
 program
   .command('dashboard')
   .alias('d')
-  .description('Overview panel (default when no subcommand)')
+  .description('Overview panel')
   .action(async () => {
     await runDashboard();
   });
@@ -498,39 +567,52 @@ registerAgentCommands(program);
 
 program
   .command('chat')
-  .description('Send one message to an agent (LLM sessions only)')
+  .description('Chat with an agent (omit -m for interactive CLI REPL)')
   .argument('<sessionId>', 'Session id (prefix allowed)')
-  .requiredOption('-m, --message <text>', 'User message')
+  .option('-m, --message <text>', 'One-shot user message (skip REPL)')
   .action(async (sessionId: string, opts) => {
     try {
-      const data = await gatewayJson<{ sessions: Array<{ id: string; runtimeMode?: string }> }>('/api/sessions');
-      const rows = data.sessions || [];
-      const sid = sessionId.toLowerCase();
-      const match =
-        rows.find(s => s.id === sessionId) ||
-        rows.find(s => s.id.toLowerCase().startsWith(sid));
-      if (!match) {
-        console.error(bad('No session:'), sessionId);
+      const msg = opts.message != null ? String(opts.message).trim() : '';
+      if (msg) {
+        await chatOnce(sessionId, msg);
+        return;
+      }
+      if (!process.stdin.isTTY) {
+        console.error(bad('Interactive chat needs a TTY, or pass -m "message".'));
         process.exit(1);
       }
-      if (match.runtimeMode === 'offline') {
-        console.error(bad('Session is offline / script mode — use the Workspace tab or offline run API.'));
-        process.exit(1);
+      await chatRepl(sessionId);
+    } catch (e: unknown) {
+      console.error(bad('Error:'), e instanceof Error ? e.message : e);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('files')
+  .description('List files Caprigo recently created or edited')
+  .option('-n, --limit <n>', 'Max paths', '40')
+  .option('-j, --json', 'JSON output')
+  .action(async opts => {
+    try {
+      const limit = Math.min(200, Math.max(1, parseInt(String(opts.limit || '40'), 10) || 40));
+      const data = await gatewayJson<{
+        touched: Array<{ path: string; lastAction: string; lastTs: string; count: number }>;
+        events?: unknown[];
+        count: number;
+      }>(`/api/file-ledger?limit=${limit}`);
+      if (opts.json) {
+        console.log(JSON.stringify(data, null, 2));
+        return;
       }
-      const msg = String(opts.message || '').trim();
-      if (!msg) {
-        console.error(bad('Empty message'));
-        process.exit(1);
+      console.log(titleLine(`File ledger (${data.count})`));
+      const rows = data.touched || [];
+      if (!rows.length) {
+        console.log(dim('No writes/edits recorded yet. Ask an agent to write_file or search_replace.'));
+        return;
       }
-      const out = await gatewayPostJson<{ response?: string; error?: string }>(
-        `/api/sessions/${match.id}/messages`,
-        { message: msg }
-      );
-      if (out.response !== undefined) {
-        console.log(out.response);
-      } else {
-        console.error(bad(out.error || 'Unknown error'));
-        process.exit(1);
+      for (const r of rows) {
+        console.log(`${ok(r.lastAction.padEnd(8))} ${trunc(r.path, 72)}  ${dim(`×${r.count}`)}`);
       }
     } catch (e: unknown) {
       console.error(bad('Error:'), e instanceof Error ? e.message : e);
@@ -779,6 +861,67 @@ program
   });
 
 program
+  .command('connect')
+  .description('Discover LM Studio on localhost/LAN and write Caprigo .env for the harness')
+  .argument('[target]', 'Optional host or URL (e.g. 10.0.0.27 or http://10.0.0.27:1234/v1)')
+  .option('--host <host>', 'LM Studio host IP/hostname')
+  .option('--port <port>', 'LM Studio port', '1234')
+  .option('--model <id>', 'Model id to set as DEFAULT_MODEL')
+  .option('--no-scan', 'Do not scan the LAN /24')
+  .option('--dry-run', 'Discover only; do not write .env')
+  .option('--launch', 'Start embedded TUI after connecting')
+  .action(async (target: string | undefined, opts) => {
+    try {
+      const { connectLmStudio, normalizeLmStudioBase } = await import('./lmstudio-connect');
+      const envPath = envFilePath();
+      const port = Math.max(1, parseInt(String(opts.port || '1234'), 10) || 1234);
+      let hostOpt = (opts.host as string | undefined)?.trim() || undefined;
+      if (!hostOpt && target?.trim()) {
+        const t = target.trim();
+        if (/^https?:\/\//i.test(t)) {
+          hostOpt = new URL(normalizeLmStudioBase(t, port)).hostname;
+        } else {
+          hostOpt = t.replace(/:\d+$/, '').replace(/\/.*$/, '');
+        }
+      }
+
+      console.log('');
+      console.log(titleLine('Caprigo - connect LM Studio'));
+      console.log('');
+
+      const result = await connectLmStudio({
+        envPath,
+        host: hostOpt,
+        port,
+        model: (opts.model as string | undefined)?.trim(),
+        scanLan: opts.scan !== false,
+        write: !opts.dryRun,
+        onProgress: m => console.log(dim(`  ${m}`)),
+      });
+      console.log('');
+      console.log(
+        framedSection(opts.dryRun ? 'Discovered (dry-run)' : 'Connected', [
+          `Base URL: ${result.baseUrl}`,
+          `Model:    ${result.model}`,
+          `Models:   ${result.models.join(', ') || '(none listed)'}`,
+          opts.dryRun ? 'Wrote:    (skipped)' : `Wrote:    ${result.envPath}`,
+        ])
+      );
+      console.log('');
+      if (opts.launch && !opts.dryRun) {
+        console.log(dim('Launching embedded TUI…'));
+        await runTui();
+      } else if (!opts.dryRun) {
+        console.log(dim('Next: caprigo tui'));
+        console.log('');
+      }
+    } catch (e: unknown) {
+      console.error(bad('Error:'), e instanceof Error ? e.message : e);
+      process.exit(1);
+    }
+  });
+
+program
   .command('onboard')
   .description('Print the user setup path before agents begin operating')
   .action(() => {
@@ -823,20 +966,21 @@ program.addHelpText(
   'after',
   `
 ${dim('Examples:')}
-  ${bold('caprigo')}                      ${dim('# overview (same as dashboard)')}
-  ${bold('caprigo open')}                 ${dim('# browser UI')}
+  ${bold('caprigo')}                      ${dim('# TUI shell (chat / files / agents)')}
+  ${bold('caprigo tui')} ${dim('[id]')}
   ${bold('caprigo agents list')}
-  ${bold('caprigo agents create')} ${dim('-n "Reviewer" --orchestrator')}
-  ${bold('caprigo chat')} ${dim('<id> -m "Summarize package.json"')}
-  ${bold('caprigo skills')}
-  ${bold('caprigo models')}
+  ${bold('caprigo chat')} ${dim('<id> -m "…"')}
+  ${bold('caprigo files')}
+  ${bold('caprigo dashboard')}            ${dim('# one-shot status panel')}
 `
 );
 
 const argv = process.argv.slice(2);
 if (argv.length === 0) {
-  void runDashboard()
-    .then(() => process.exit(0))
+  void runTui()
+    .then(() => {
+      /* tui owns process exit */
+    })
     .catch(e => {
       console.error(e);
       process.exit(1);

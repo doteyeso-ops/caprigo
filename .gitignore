@@ -3,5 +3,13 @@ dist/
 *.log
 .env
 .caprigo/
+.tmp-*/
+.tmp-*
 skills/.caprigo-skills-db.json
 skills/.radbot-skills-db.json
+packages/agent/.venv-ocr/
+generated/
+LLM/
+animation/
+1/
+Images/

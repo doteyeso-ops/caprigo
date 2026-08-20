@@ -97,6 +97,7 @@ export function AgentBuilderDialog({
   onPatch,
   onCreated,
 }: Props) {
+  const defaultCreateTemplateId = 'coder';
   const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
   const [objective, setObjective] = useState('');
@@ -111,8 +112,16 @@ export function AgentBuilderDialog({
   const [sessionModel, setSessionModel] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(defaultCreateTemplateId);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  const selectedTemplate = useMemo(
+    () => STARTER_TEMPLATES.find(t => t.id === selectedTemplateId) ?? STARTER_TEMPLATES[0],
+    [selectedTemplateId]
+  );
 
   const applyTemplate = (template: AgentStarterTemplate) => {
+    setSelectedTemplateId(template.id);
     setDisplayName(template.displayName);
     setDescription(template.description);
     setObjective(template.objective);
@@ -131,6 +140,7 @@ export function AgentBuilderDialog({
     if (!open) return;
     setErr(null);
     setSkillSearch('');
+    setAdvancedOpen(false);
     if (mode === 'edit' && agent) {
       setDisplayName(agent.displayName || '');
       setDescription(agent.description ?? '');
@@ -156,6 +166,9 @@ export function AgentBuilderDialog({
       setPickedSkills(new Set());
       setPrimaryScriptId('');
       setSessionModel(null);
+      const starter = STARTER_TEMPLATES.find(t => t.id === defaultCreateTemplateId) ?? STARTER_TEMPLATES[0];
+      setSelectedTemplateId(starter.id);
+      applyTemplate(starter);
     }
   }, [open, mode, agent]);
 
@@ -212,7 +225,7 @@ export function AgentBuilderDialog({
           runtimeMode,
           agentRole,
         };
-        if (description.trim()) body.description = description.trim();
+        body.description = description.trim() || selectedTemplate.description;
         if (objective.trim()) body.objective = objective.trim();
         if (agentInstructionsPath.trim()) body.agentInstructionsPath = agentInstructionsPath.trim();
         if (assignedSkills.length) body.assignedSkills = assignedSkills;
@@ -267,6 +280,8 @@ export function AgentBuilderDialog({
 
   if (!open) return null;
 
+  const isCreate = mode === 'create';
+
   return (
     <div className="rb-dialog-root" role="presentation" onClick={onClose}>
       <div
@@ -274,159 +289,159 @@ export function AgentBuilderDialog({
         role="dialog"
         aria-labelledby="agent-builder-title"
         onClick={e => e.stopPropagation()}
-      >
+        >
         <header className="rb-dialog__head">
-          <h2 id="agent-builder-title" className="rb-dialog__title">
-            {mode === 'create' ? 'Create agent' : 'Edit agent'}
-          </h2>
+          <div className="rb-builder__headline">
+            <h2 id="agent-builder-title" className="rb-dialog__title">
+              {isCreate ? 'Create agent' : 'Edit agent'}
+            </h2>
+          </div>
           <button type="button" className="rb-icon-btn" onClick={onClose}>
             Close
           </button>
         </header>
 
         <div className="rb-builder__body">
-          {mode === 'create' && (
+          {isCreate && (
             <section className="rb-builder__section">
-              <h3 className="rb-builder__h">Starter templates</h3>
-              <p className="rb-muted rb-builder__hint rb-builder__hint--top">
-                Start from a proven role, then adjust the objective, tools, and runtime.
-              </p>
+              <h3 className="rb-builder__h">Starter</h3>
               <div className="rb-builder__templates">
-                {STARTER_TEMPLATES.map(template => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    className="rb-builder__template"
-                    onClick={() => applyTemplate(template)}
-                  >
-                    <strong className="rb-builder__template-title">{template.label}</strong>
-                    <span className="rb-builder__template-meta">
-                      {template.runtimeMode === 'llm' ? 'LLM' : 'Offline'} ·{' '}
-                      {template.agentRole === 'orchestrator' ? 'Orchestrator' : 'Agent'}
-                    </span>
-                    <span className="rb-builder__template-blurb">{template.blurb}</span>
-                  </button>
-                ))}
+                {STARTER_TEMPLATES.map(template => {
+                  const active = selectedTemplateId === template.id;
+                  return (
+                    <button
+                      key={template.id}
+                      type="button"
+                      className={`rb-builder__template${active ? ' rb-builder__template--active' : ''}`}
+                      onClick={() => applyTemplate(template)}
+                    >
+                      <strong className="rb-builder__template-title">{template.label}</strong>
+                      <span className="rb-builder__template-meta">
+                        {template.runtimeMode === 'llm' ? 'LLM' : 'Offline'} ·{' '}
+                        {template.agentRole === 'orchestrator' ? 'Orchestrator' : 'Worker'}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </section>
           )}
 
           <section className="rb-builder__section">
-            <h3 className="rb-builder__h">Basic info</h3>
+            <h3 className="rb-builder__h">Basics</h3>
             <label className="rb-builder__field">
-              <span>Agent name *</span>
+              <span>Name *</span>
               <input
                 className="rb-input"
                 value={displayName}
                 onChange={e => setDisplayName(e.target.value)}
-                placeholder="e.g. Research assistant"
+                placeholder={selectedTemplate.displayName}
                 autoComplete="off"
               />
             </label>
             <label className="rb-builder__field">
-              <span>Description</span>
-              <input
-                className="rb-input"
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                placeholder="One-line summary of what this agent owns"
-              />
-            </label>
-            <label className="rb-builder__field">
-              <span>Objective (essential outcome)</span>
+              <span>Goal</span>
               <textarea
                 className="rb-textarea rb-builder__textarea"
                 value={objective}
                 onChange={e => setObjective(e.target.value)}
-                placeholder="Define done in one sentence: the outcome this agent should finish or prove."
-                rows={3}
+                placeholder={selectedTemplate.objective}
+                rows={2}
               />
             </label>
-            <label className="rb-builder__field">
-              <span>Instruction file (.md)</span>
-              <input
-                className="rb-input"
-                value={agentInstructionsPath}
-                onChange={e => setAgentInstructionsPath(e.target.value)}
-                placeholder="e.g. docs/agents/researcher.md"
-                autoComplete="off"
-              />
-              <p className="rb-muted rb-builder__hint">
-                Relative path from the gateway workspace{workspaceRoot ? (
-                  <>
-                    : <code className="rb-code rb-code--break">{workspaceRoot}</code>
-                  </>
-                ) : (
-                  ' (set CAPRIGO_WORKSPACE or start the gateway from your project root)'
+            {isCreate && (
+              <button
+                type="button"
+                className="rb-builder__advanced-toggle"
+                onClick={() => setAdvancedOpen(v => !v)}
+              >
+                {advancedOpen ? 'Hide options' : 'More options'}
+              </button>
+            )}
+            {(!isCreate || advancedOpen) && (
+              <div className="rb-builder__advanced">
+                {isCreate && (
+                  <label className="rb-builder__field">
+                    <span>Note</span>
+                    <input
+                      className="rb-input"
+                      value={description}
+                      onChange={e => setDescription(e.target.value)}
+                      placeholder={selectedTemplate.description}
+                    />
+                  </label>
                 )}
-                . Contents are added to this agent&apos;s <strong>LLM</strong> system prompt when chat runs. Leave empty
-                to disable.
-              </p>
-            </label>
-            <div className="rb-builder__field rb-builder__inline">
-              <span>Fleet role</span>
-              <div className="rb-builder__seg">
-                <button
-                  type="button"
-                  className={`rb-btn${agentRole === 'agent' ? ' rb-btn--accent' : ''}`}
-                  onClick={() => setAgentRole('agent')}
-                >
-                  Agent
-                </button>
-                <button
-                  type="button"
-                  className={`rb-btn${agentRole === 'orchestrator' ? ' rb-btn--accent' : ''}`}
-                  onClick={() => {
-                    setAgentRole('orchestrator');
-                    setLinkedOrchId('');
-                  }}
-                >
-                  Orchestrator
-                </button>
+                <label className="rb-builder__field">
+                  <span>Instruction file</span>
+                  <input
+                    className="rb-input"
+                    value={agentInstructionsPath}
+                    onChange={e => setAgentInstructionsPath(e.target.value)}
+                    placeholder="e.g. docs/agents/researcher.md"
+                    autoComplete="off"
+                  />
+                </label>
+                <div className="rb-builder__field rb-builder__inline">
+                  <span>Role</span>
+                  <div className="rb-builder__seg">
+                    <button
+                      type="button"
+                      className={`rb-btn${agentRole === 'agent' ? ' rb-btn--accent' : ''}`}
+                      onClick={() => setAgentRole('agent')}
+                    >
+                      Worker
+                    </button>
+                    <button
+                      type="button"
+                      className={`rb-btn${agentRole === 'orchestrator' ? ' rb-btn--accent' : ''}`}
+                      onClick={() => {
+                        setAgentRole('orchestrator');
+                        setLinkedOrchId('');
+                      }}
+                    >
+                      Lead
+                    </button>
+                  </div>
+                </div>
+                {agentRole === 'agent' && orchestrators.length > 0 && (
+                  <label className="rb-builder__field">
+                    <span>Reports to</span>
+                    <select
+                      className="rb-input"
+                      value={linkedOrchId}
+                      onChange={e => setLinkedOrchId(e.target.value)}
+                    >
+                      <option value="">— none —</option>
+                      {orchestrators.map(o => (
+                        <option key={o.id} value={o.id}>
+                          {o.displayName} ({o.id.slice(0, 8)}…)
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
               </div>
-            </div>
-            {agentRole === 'agent' && orchestrators.length > 0 && (
-              <label className="rb-builder__field">
-                <span>Report to orchestrator (optional)</span>
-                <select
-                  className="rb-input"
-                  value={linkedOrchId}
-                  onChange={e => setLinkedOrchId(e.target.value)}
-                >
-                  <option value="">— none —</option>
-                  {orchestrators.map(o => (
-                    <option key={o.id} value={o.id}>
-                      {o.displayName} ({o.id.slice(0, 8)}…)
-                    </option>
-                  ))}
-                </select>
-              </label>
             )}
           </section>
 
           <section className="rb-builder__section">
-            <h3 className="rb-builder__h">Runtime mode</h3>
+            <h3 className="rb-builder__h">Mode</h3>
             <div className="rb-builder__seg rb-builder__seg--lg">
               <button
                 type="button"
                 className={`rb-btn${runtimeMode === 'llm' ? ' rb-btn--accent' : ''}`}
                 onClick={() => setRuntimeMode('llm')}
               >
-                LLM (chat + tools)
+                Chat
               </button>
               <button
                 type="button"
                 className={`rb-btn${runtimeMode === 'offline' ? ' rb-btn--accent rb-btn--offline' : ''}`}
                 onClick={() => setRuntimeMode('offline')}
               >
-                Offline / Local (scripts)
+                Offline
               </button>
             </div>
-            <p className="rb-muted rb-builder__hint">
-              {runtimeMode === 'llm'
-                ? 'Uses the configured server model in Session view (per-agent override below). Skills are exposed as tools.'
-                : 'No live Session chat for this agent. Run disk scripts from the Board. Skills stay on the server but are not invoked until you switch back to LLM.'}
-            </p>
           </section>
 
           {runtimeMode === 'llm' && (
@@ -443,9 +458,9 @@ export function AgentBuilderDialog({
             </section>
           )}
 
-          {runtimeMode === 'llm' && (
+          {runtimeMode === 'llm' && (!isCreate || advancedOpen) && (
             <section className="rb-builder__section">
-              <h3 className="rb-builder__h">LLM tools (skills)</h3>
+              <h3 className="rb-builder__h">Tools</h3>
               <label className="rb-builder__check">
                 <input
                   type="checkbox"
@@ -456,14 +471,14 @@ export function AgentBuilderDialog({
                   }}
                 />
                 <span>
-                  Use all registered skills ({catalog.length})
+                  All skills ({catalog.length})
                 </span>
               </label>
               {!useAllSkills && (
                 <>
                   <input
                     className="rb-input rb-builder__search"
-                    placeholder="Search skills…"
+                    placeholder="Search skills"
                     value={skillSearch}
                     onChange={e => setSkillSearch(e.target.value)}
                   />
@@ -603,16 +618,10 @@ export function AgentBuilderDialog({
               {localScripts.length === 0 ? (
                 <div className="rb-builder__empty">
                   <p>No offline scripts found.</p>
-                  <p className="rb-muted">
-                    Add a <code className="rb-code">manifest.json</code> or <code className="rb-code">*.mjs</code> files
-                    under{' '}
-                    {scriptsDir ? <code className="rb-code rb-code--break">{scriptsDir}</code> : 'your offline-scripts directory'}
-                    , then refresh the page.
-                  </p>
                 </div>
               ) : (
                 <label className="rb-builder__field">
-                  <span>Primary script *</span>
+                  <span>Script *</span>
                   <select
                     className="rb-input"
                     value={primaryScriptId}

@@ -19,6 +19,16 @@ function ToolLine({ task }: { task: AgentCardModel['tasks'][0] }) {
 }
 
 function summarizeAgentState(agent: AgentCardModel, localNameById: Record<string, string>): string {
+  if (agent.taskState === 'blocked') {
+    return agent.taskSummary
+      ? `Blocked: ${agent.taskSummary}`
+      : 'Task is blocked. Open details or the Session view to inspect the blocker.';
+  }
+  if (agent.taskState === 'done') {
+    return agent.taskSummary
+      ? `Done: ${agent.taskSummary}`
+      : 'Task marked done. Ready for the next objective or validation pass.';
+  }
   if (agent.status === 'error') {
     return 'Blocked by an error. Open details or the Session view to inspect the failure.';
   }
@@ -33,6 +43,12 @@ function summarizeAgentState(agent: AgentCardModel, localNameById: Record<string
       return `Ready to run ${localNameById[agent.primaryOfflineScriptId] || 'its assigned script'} from the Board.`;
     }
     return 'Offline-only agent waiting for a script assignment.';
+  }
+  if (agent.objective?.trim()) {
+    if (agent.status === 'idle') {
+      return 'Task objective set. Ready to continue the current job or start a new step.';
+    }
+    return 'Working the current objective through tools and checkpoints.';
   }
   if (agent.agentRole === 'orchestrator') {
     return 'Ready to coordinate linked worker agents.';
@@ -81,6 +97,8 @@ export function AgentCard({
   const skillN = a.assignedSkills?.length ?? 0;
   const skillLabel = skillN === 0 ? 'All skills' : `${skillN} skill${skillN === 1 ? '' : 's'}`;
   const objectiveText = a.objective?.trim();
+  const taskStateLabel =
+    a.taskState === 'done' ? 'Done' : a.taskState === 'blocked' ? 'Blocked' : a.taskState === 'continue' ? 'Continuing' : '';
   const stateSummary = summarizeAgentState(a, localNameById);
   const canOpenSession = mode === 'llm';
   const handoffLabel = canOpenSession ? 'Open session' : 'Open board';
@@ -140,6 +158,11 @@ export function AgentCard({
         </div>
         <div className="rb-agent-card__meta">
           <span className={`rb-status-pill rb-status-pill--${a.status}`}>{a.status}</span>
+          {taskStateLabel && (
+            <span className={`rb-task-pill rb-task-pill--${a.taskState}`} title={a.taskSummary || 'Current task state'}>
+              {taskStateLabel}
+            </span>
+          )}
           <span
             className={`rb-runtime-pill rb-runtime-pill--${mode}`}
             title={mode === 'llm' ? 'Uses server LLM in Session view' : 'Offline-only - use the Board for disk scripts'}
@@ -195,6 +218,9 @@ export function AgentCard({
         <div className="rb-agent-card__activity-label">Activity</div>
         <div className="rb-agent-card__activity-body">
           <p className="rb-agent-card__summary">{stateSummary}</p>
+          {a.taskSummary?.trim() && a.taskState === 'continue' && (
+            <p className="rb-agent-card__summary rb-agent-card__summary--task">Checkpoint: {a.taskSummary.trim()}</p>
+          )}
           <div className="rb-agent-card__handoff">
             <button
               type="button"

@@ -1,7 +1,11 @@
 /**
- * Vibes-Coded (vibes-coded.com) marketplace tools — REST parity with the public API and agent flows.
+ * Vibes-Coded (vibes-coded.com) marketplace tools — REST parity with listings/import/feed flows.
  * Optional auth: VIBES_CODED_API_KEY (or CAPRIGO_VIBES_API_KEY).
  * Local markdown packs: CAPRIGO_VIBES_PACKS_DIR.
+ *
+ * Caprigo skills here are listings-oriented. Outcome prepaid / Operator Interrupt live on the public site:
+ *   https://vibes-coded.com/start · X-Operator-Notify → /api/v1/operator-interrupt/{id}
+ *   Official connector: https://doteyeso-ops.github.io/vibes-coded-agent-connector/
  */
 
 import * as fs from 'fs/promises';

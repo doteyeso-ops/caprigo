@@ -1,8 +1,17 @@
-import { Skill, resolveCaprigoToolPath, checkCaprigoPathAccess, caprigoWorkspaceRoot } from '@caprigo/shared';
+import {
+  Skill,
+  resolveCaprigoToolPath,
+  checkCaprigoPathAccess,
+  caprigoWorkspaceRoot,
+  recordFileChange,
+  readFileLedgerTail,
+  summarizeTouchedFiles,
+} from '@caprigo/shared';
 import type { Dirent, Stats } from 'fs';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as ts from 'typescript';
+import { annotateWithHashes, applyHashEdits, type HashEditOp } from './hashline';
 
 const SEARCH_IGNORE_DIRS = new Set([
   'node_modules',
@@ -184,14 +193,35 @@ function scoreTextAgainstTokens(text: string, tokens: string[]): { score: number
 
 export const readFileSkill: Skill = {
   name: 'read_file',
-  description: 'Read the contents of a file',
-  execute: async (params: { path: string }) => {
+  description:
+    'Read a file. By default each line is annotated as `NNN:hhh|text` (line number + content hash) so you can edit with hash_edit. Pass annotate=false for raw text.',
+  toolParameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'File path' },
+      annotate: {
+        type: 'boolean',
+        description: 'If true (default), prefix lines with NNN:hhh| for hash_edit anchors. Set false for raw.',
+      },
+    },
+    required: ['path'],
+  },
+  execute: async (params: { path: string; annotate?: boolean }) => {
     try {
       const filePath = resolveCaprigoToolPath(String(params.path || ''));
       const access = checkCaprigoPathAccess(filePath, 'read');
       if (!access.allowed) return { success: false, error: access.reason };
       const content = await fs.readFile(filePath, 'utf-8');
-      return { success: true, content };
+      const annotate = params.annotate !== false;
+      if (!annotate) return { success: true, path: filePath, content, annotated: false };
+      return {
+        success: true,
+        path: filePath,
+        content: annotateWithHashes(content),
+        annotated: true,
+        edit_hint:
+          'Edit with hash_edit using anchors like "a7c" or "42:a7c". Prefer hash_edit over search_replace when anchors are available.',
+      };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
@@ -200,13 +230,48 @@ export const readFileSkill: Skill = {
 
 export const writeFileSkill: Skill = {
   name: 'write_file',
-  description: 'Write content to a file',
-  execute: async (params: { path: string; content: string }) => {
+  description:
+    'Write content to a file. Creates parent directories automatically. Prefer paths under generated/ (e.g. generated/sunset.html). Put the FULL file text in content — never stubs or "..." placeholders.',
+  toolParameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'File path to write (prefer generated/... )' },
+      content: { type: 'string', description: 'Full file contents (never omit; never use ... placeholders)' },
+    },
+    required: ['path', 'content'],
+  },
+  execute: async (params: {
+    path?: string;
+    content?: string;
+    target?: string;
+    file?: string;
+    filepath?: string;
+  }) => {
     try {
-      const filePath = resolveCaprigoToolPath(String(params.path || ''));
+      const content = params.content;
+      if (content == null || typeof content !== 'string') {
+        return {
+          success: false,
+          error:
+            'write_file requires string "content". Call again with path and the FULL file text (no ellipsis stubs).',
+        };
+      }
+      const pathArg = String(
+        params.path || params.target || params.file || params.filepath || ''
+      ).trim();
+      if (!pathArg) {
+        return { success: false, error: 'write_file requires "path"' };
+      }
+      const filePath = resolveCaprigoToolPath(pathArg);
       const access = checkCaprigoPathAccess(filePath, 'write');
       if (!access.allowed) return { success: false, error: access.reason };
-      await fs.writeFile(filePath, params.content, 'utf-8');
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content, 'utf-8');
+      recordFileChange({
+        action: 'write',
+        path: filePath,
+        bytes: Buffer.byteLength(content, 'utf8'),
+      });
       return { success: true, message: `File written to ${filePath}` };
     } catch (error: any) {
       return { success: false, error: error.message };
@@ -238,7 +303,7 @@ export const listDirectorySkill: Skill = {
 export const searchFilesSkill: Skill = {
   name: 'search_files',
   description:
-    'Search for a text substring in files under a directory. Returns matching file paths with line previews. Skips node_modules, .git, and common build folders.',
+    'LOCAL codebase/disk text search only — find a substring inside files under a directory (grep-like). Use when the user means the repo/workspace/files on disk ("search the code for X", "find TODO in this project"). Do NOT use for internet/news/how-to questions — use web_search for those.',
   toolParameters: {
     type: 'object',
     properties: {
@@ -340,6 +405,67 @@ export const searchFilesSkill: Skill = {
   },
 };
 
+/** Hash-anchored surgical edits — preferred after read_file (annotated). */
+export const hashEditSkill: Skill = {
+  name: 'hash_edit',
+  description:
+    'Edit a file by content-hash anchors from read_file (format NNN:hhh|line). More reliable than search_replace for local models. Actions: replace, delete, insert_after, insert_before.',
+  toolParameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'File path' },
+      edits: {
+        type: 'array',
+        description: 'List of edits applied in one write (anchors resolved against current file).',
+        items: {
+          type: 'object',
+          properties: {
+            anchor: {
+              type: 'string',
+              description: 'Hash (a7c), line:hash (42:a7c), or line number (42)',
+            },
+            action: {
+              type: 'string',
+              description: 'replace | delete | insert_after | insert_before',
+            },
+            content: {
+              type: 'string',
+              description: 'New text for replace/insert (may be multi-line)',
+            },
+          },
+          required: ['anchor', 'action'],
+        },
+      },
+    },
+    required: ['path', 'edits'],
+  },
+  execute: async (params: { path: string; edits: HashEditOp[] }) => {
+    try {
+      const filePath = resolveCaprigoToolPath(String(params.path || ''));
+      const access = checkCaprigoPathAccess(filePath, 'write');
+      if (!access.allowed) return { success: false, error: access.reason };
+      const before = await fs.readFile(filePath, 'utf-8');
+      const result = applyHashEdits(before, params.edits || []);
+      if ('error' in result) return { success: false, error: result.error };
+      await fs.writeFile(filePath, result.content, 'utf-8');
+      recordFileChange({
+        action: 'replace',
+        path: filePath,
+        replacements: result.applied.length,
+        bytes: Buffer.byteLength(result.content, 'utf8'),
+      });
+      return {
+        success: true,
+        path: filePath,
+        edits_applied: result.applied.length,
+        applied: result.applied,
+      };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  },
+};
+
 /** Replace text in a file; default requires exactly one occurrence (OpenClaw-style surgical edit). */
 export const searchReplaceSkill: Skill = {
   name: 'search_replace',
@@ -388,10 +514,46 @@ export const searchReplaceSkill: Skill = {
         next = content.replace(oldStr, newStr);
       }
       await fs.writeFile(filePath, next, 'utf-8');
+      recordFileChange({
+        action: 'replace',
+        path: filePath,
+        replacements: replaceAll ? count : 1,
+        bytes: Buffer.byteLength(next, 'utf8'),
+      });
       return { success: true, path: filePath, replacements: replaceAll ? count : 1 };
     } catch (error: any) {
       return { success: false, error: error.message };
     }
+  },
+};
+
+/** Durable ledger of files Caprigo created/edited (survives gateway restarts). */
+export const listFileChangesSkill: Skill = {
+  name: 'list_file_changes',
+  description:
+    'List files Caprigo recently created or edited (write_file / hash_edit / search_replace). Use this to keep track of work across the session.',
+  toolParameters: {
+    type: 'object',
+    properties: {
+      limit: { type: 'number', description: 'Max unique paths (default 30).' },
+      detail: {
+        type: 'boolean',
+        description: 'If true, also return raw recent ledger events.',
+      },
+    },
+  },
+  execute: async (params: { limit?: number; detail?: boolean }) => {
+    const limit = Math.min(Math.max(params.limit ?? 30, 1), 100);
+    const touched = summarizeTouchedFiles(limit);
+    const out: Record<string, unknown> = {
+      success: true,
+      touched_count: touched.length,
+      touched,
+    };
+    if (params.detail === true) {
+      out.recent_events = readFileLedgerTail(Math.min(limit * 2, 100));
+    }
+    return out;
   },
 };
 
@@ -699,7 +861,9 @@ export const fileSystemSkills: Skill[] = [
   writeFileSkill,
   listDirectorySkill,
   searchFilesSkill,
+  hashEditSkill,
   searchReplaceSkill,
+  listFileChangesSkill,
   repoMapSkill,
   codebaseContextSkill,
 ];

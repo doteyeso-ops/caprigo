@@ -33,6 +33,9 @@ export interface OllamaChatMessage {
   content?: string;
   tool_calls?: OllamaToolCall[];
   tool_name?: string;
+  /** Thinking / reasoning models (Ollama may stream these as deltas). */
+  thinking?: string;
+  reasoning?: string;
 }
 
 export interface OllamaChatRequest {
@@ -61,6 +64,15 @@ export interface OllamaChatResponse {
   created_at: string;
   message: OllamaChatMessage;
   done: boolean;
+  /** Prompt tokens evaluated */
+  prompt_eval_count?: number;
+  /** Completion tokens generated */
+  eval_count?: number;
+  /** Nanoseconds */
+  total_duration?: number;
+  load_duration?: number;
+  prompt_eval_duration?: number;
+  eval_duration?: number;
 }
 
 /** Default per-request ceiling for `/api/chat` (one model round; multi-tool turns use multiple requests). */

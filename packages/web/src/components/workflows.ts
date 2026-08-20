@@ -1,4 +1,4 @@
-export type WorkflowTemplateId = 'repo-coding' | 'offline-automation' | 'launch-audit' | 'pr-review';
+export type WorkflowTemplateId = 'repo-coding' | 'offline-automation' | 'launch-audit' | 'pr-review' | 'niche-scout';
 
 export const WORKFLOW_LIBRARY: Array<{
   id: WorkflowTemplateId;
@@ -44,6 +44,15 @@ export const WORKFLOW_LIBRARY: Array<{
     bestFor: 'Merge review, regression checks, risk ranking, and missing-test analysis.',
     leadName: 'PR Review Lead',
     memberNames: ['Diff Scout', 'Risk Reviewer'],
+  },
+  {
+    id: 'niche-scout',
+    title: 'Niche Scout Crew',
+    roles: 'Lead + Market Scout + Validation Analyst',
+    blurb: 'For a rented GPU-backed research run that hunts for a repeatable, profitable niche.',
+    bestFor: 'Market discovery, demand research, offer validation, and repeatable business process design.',
+    leadName: 'Niche Scout Lead',
+    memberNames: ['Market Scout', 'Validation Analyst'],
   },
 ];
 
