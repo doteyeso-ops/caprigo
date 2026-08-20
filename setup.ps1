@@ -1,12 +1,9 @@
 param(
   [switch]$SkipInstall,
   [switch]$SkipBuild,
-  [switch]$SkipWebBuild,
   [switch]$SkipInteractiveSetup,
-  [switch]$Launch,
-  [switch]$NoLaunch,
-  [switch]$OpenBrowser,
-  [switch]$NoOpenBrowser
+  [switch]$LaunchHud,
+  [switch]$NoLaunch
 )
 
 Set-StrictMode -Version Latest
@@ -27,18 +24,11 @@ function Get-NpmCommand {
 
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $npm = Get-NpmCommand
-$SetupArgs = @('setup', '--interactive')
+$SetupArgs = @('setup', '--interactive', '--no-launch')
 
-if ($Launch -and $NoLaunch) {
-  throw "Use either -Launch or -NoLaunch, not both."
+if ($LaunchHud -and $NoLaunch) {
+  throw "Use either -LaunchHud or -NoLaunch, not both."
 }
-if ($OpenBrowser -and $NoOpenBrowser) {
-  throw "Use either -OpenBrowser or -NoOpenBrowser, not both."
-}
-if ($Launch) { $SetupArgs += '--launch' }
-if ($NoLaunch) { $SetupArgs += '--no-launch' }
-if ($OpenBrowser) { $SetupArgs += '--open-browser' }
-if ($NoOpenBrowser) { $SetupArgs += '--no-open-browser' }
 
 Push-Location $RepoRoot
 try {
@@ -49,15 +39,9 @@ try {
   }
 
   if (-not $SkipBuild) {
-    Write-Step "Building Caprigo packages"
+    Write-Step "Building Caprigo CLI harness"
     & $npm run build
     if ($LASTEXITCODE -ne 0) { throw "npm run build failed." }
-  }
-
-  if (-not $SkipWebBuild) {
-    Write-Step "Building web app"
-    & $npm run build:web
-    if ($LASTEXITCODE -ne 0) { throw "npm run build:web failed." }
   }
 
   if (-not $SkipInteractiveSetup) {
@@ -68,11 +52,17 @@ try {
     Write-Step "Skipping guided setup"
   }
 
+  if ($LaunchHud) {
+    Write-Step "Launching CLI HUD"
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "launch-hud.ps1")
+    if ($LASTEXITCODE -ne 0) { throw "HUD launch failed." }
+  }
+
   Write-Host ""
-  Write-Host "Caprigo setup wrapper finished." -ForegroundColor Green
+  Write-Host "Caprigo setup finished." -ForegroundColor Green
   Write-Host "Repo: $RepoRoot"
-  Write-Host "Overview: http://127.0.0.1:18789"
-  Write-Host "Next: confirm backend/model on Overview, then create the first agent."
+  Write-Host "Daily path: .\launch-hud.ps1  (or .\launch.ps1)"
+  Write-Host "Next: start LM Studio, load a tool model, then launch the HUD."
 }
 finally {
   Pop-Location

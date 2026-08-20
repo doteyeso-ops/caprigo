@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Caprigo HUD preview</title>
+  <style>
+    :root {
+      --teal: #4fd1c5;
+      --purple: #b794f4;
+      --amber: #f6ad55;
+      --green: #48bb78;
+      --red: #fc8181;
+      --gray: #94a3b8;
+      --dim: #64748b;
+      --white: #f1f5f9;
+      --border: #475569;
+      --panel: #0f172a;
+      --header: #1e293b;
+      --online-bg: #134e4a;
+      --input-bg: #0b1220;
+      --page: #020617;
+    }
+    * { box-sizing: border-box; margin: 0; }
+    body {
+      background: var(--page);
+      min-height: 100vh;
+      font-family: "Cascadia Mono", "IBM Plex Mono", Consolas, "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.42;
+      color: var(--white);
+    }
+    body.og {
+      width: 1200px;
+      height: 630px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(ellipse 80% 60% at 50% 0%, rgba(79, 209, 197, 0.12), transparent),
+        radial-gradient(ellipse 60% 50% at 100% 100%, rgba(183, 148, 244, 0.08), transparent),
+        var(--page);
+      padding: 32px;
+    }
+    body.shot {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 28px;
+    }
+    .term {
+      width: min(1040px, 100%);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 32px 100px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(71, 85, 105, 0.5);
+    }
+    .term-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: #111827;
+      border-bottom: 1px solid #1f2937;
+    }
+    .dot { width: 11px; height: 11px; border-radius: 50%; }
+    .dot.r { background: #ef4444; }
+    .dot.y { background: #eab308; }
+    .dot.g { background: #22c55e; }
+    .term-title { flex: 1; text-align: center; color: #6b7280; font-size: 12px; }
+    .hud {
+      background: var(--panel);
+      color: var(--white);
+    }
+    .hdr {
+      background: var(--header);
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .hdr-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    .sep { color: var(--border); }
+    .brand { color: var(--teal); font-weight: 700; }
+    .muted { color: var(--gray); }
+    .online {
+      background: var(--online-bg);
+      color: var(--teal);
+      font-weight: 700;
+      padding: 1px 7px;
+      border-radius: 3px;
+      font-size: 11px;
+    }
+    .model { color: var(--purple); font-weight: 700; }
+    .status { color: var(--gray); }
+    .status.busy { color: var(--amber); font-weight: 700; }
+    .rule { height: 1px; background: var(--border); margin: 0; }
+    .cwd {
+      padding: 4px 12px;
+      color: var(--dim);
+      font-size: 12px;
+      opacity: 0.85;
+    }
+    .body {
+      display: grid;
+      grid-template-columns: 168px 1fr 228px;
+      min-height: 340px;
+    }
+    .col {
+      padding: 8px 10px;
+      border-right: 1px solid #334155;
+      vertical-align: top;
+    }
+    .col:last-child { border-right: 0; }
+    .label { color: var(--teal); font-weight: 700; font-size: 11px; letter-spacing: 0.06em; }
+    .subrule { color: var(--border); margin: 4px 0 6px; letter-spacing: -0.08em; }
+    .agent-name { color: var(--purple); font-weight: 700; }
+    .ok { color: var(--green); }
+    .dim { color: var(--dim); }
+    .session { padding-top: 2px; }
+    .sys { color: var(--gray); margin-bottom: 6px; }
+    .you { color: var(--teal); margin: 8px 0 4px; }
+    .reply { color: var(--white); margin: 6px 0; white-space: pre-wrap; }
+    .card { margin: 6px 0; font-size: 12px; }
+    .card-h { color: var(--amber); font-weight: 700; }
+    .card-b { color: var(--border); }
+    .card-path { color: var(--teal); padding-left: 14px; }
+    .card-arg { color: var(--gray); padding-left: 14px; }
+    .card-end { padding-left: 2px; }
+    .card-end.ok { color: var(--green); }
+    .meta { color: var(--gray); font-size: 12px; margin-top: 6px; }
+    .cap-line { margin: 1px 0; font-size: 12px; }
+    .cap-line.warn { color: var(--amber); }
+    .cap-line.purple { color: var(--purple); }
+    .cap-line.teal { color: var(--teal); }
+    .input {
+      border-top: 1px solid var(--border);
+      padding: 8px 12px;
+      color: var(--dim);
+      background: var(--input-bg);
+      font-size: 12px;
+    }
+    .cursor {
+      display: inline-block;
+      width: 7px;
+      height: 13px;
+      background: var(--teal);
+      vertical-align: text-bottom;
+      margin-left: 2px;
+    }
+    .scene { display: none; }
+    .scene.active { display: block; }
+  </style>
+</head>
+<body class="shot">
+  <div class="term">
+    <div class="term-bar">
+      <span class="dot r"></span>
+      <span class="dot y"></span>
+      <span class="dot g"></span>
+      <span class="term-title">Caprigo — embedded HUD</span>
+    </div>
+    <div class="hud">
+      <!-- NOTEPAD MISSION -->
+      <div id="scene-notepad" class="scene active">
+        <div class="hdr">
+          <div class="hdr-line">
+            <span class="brand">* CAPRIGO</span>
+            <span class="sep">|</span>
+            <span class="muted">local</span>
+            <span class="sep">|</span>
+            <span class="online"> LM STUDIO ONLINE </span>
+            <span class="sep">|</span>
+            <span class="model">qwen2.5-coder-7b-instruct</span>
+            <span class="sep">|</span>
+            <span class="status">ready</span>
+          </div>
+        </div>
+        <div class="rule"></div>
+        <div class="cwd">  cwd  C:\Projects\Caprigo</div>
+        <div class="rule"></div>
+        <div class="body">
+          <div class="col">
+            <div class="label"> AGENTS</div>
+            <div class="subrule">────────</div>
+            <div class="agent-name">* Caprigo</div>
+            <div class="ok">   active</div>
+            <div class="dim">   mode LOOP</div>
+            <div class="dim">   think ON</div>
+            <br />
+            <div class="dim"> /models</div>
+            <div class="dim"> /loop</div>
+            <div class="dim"> /brain</div>
+          </div>
+          <div class="col session">
+            <div class="sys">Caprigo HUD ready. Ask in plain language — Caprigo writes files and runs tools for you.</div>
+            <div class="you">you › open notepad and type hello from Caprigo</div>
+            <div class="card">
+              <div><span class="card-b">╭─</span> <span class="card-h">desktop_focus</span></div>
+              <div class="card-arg">Notepad</div>
+              <div class="card-end ok"><span class="card-b">╰─</span> ✓ focused Notepad</div>
+            </div>
+            <div class="card">
+              <div><span class="card-b">╭─</span> <span class="card-h">desktop_type</span></div>
+              <div class="card-arg">paste:true · hello from Caprigo</div>
+              <div class="card-end ok"><span class="card-b">╰─</span> ✓ typed 19 chars</div>
+            </div>
+            <div class="card">
+              <div><span class="card-b">╭─</span> <span class="card-h">desktop_screenshot</span></div>
+              <div class="card-arg">ocr:true</div>
+              <div class="card-end ok"><span class="card-b">╰─</span> ✓ marker found in OCR</div>
+            </div>
+            <div class="meta">mission verified · desktop_notepad_type</div>
+          </div>
+          <div class="col">
+            <div class="label"> CONTEXT</div>
+            <div class="subrule">─────────</div>
+            <div class="dim"> Caps</div>
+            <div class="cap-line ok"> LMS up</div>
+            <div class="cap-line ok"> Browser ok</div>
+            <div class="cap-line ok"> Desktop ok</div>
+            <div class="cap-line ok"> OCR winrt</div>
+            <div class="cap-line ok"> Web brave</div>
+            <div class="cap-line ok"> Mission desktop_notepad_type</div>
+            <div class="cap-line purple"> Dialect openai</div>
+            <div class="cap-line teal"> Brain 3 sticky</div>
+            <br />
+            <div class="dim"> Goal</div>
+            <div> type hello in notepad</div>
+          </div>
+        </div>
+        <div class="input">Ask Caprigo…  /save  /sessions  /models  /bug<span class="cursor"></span></div>
+      </div>
+
+      <!-- WEB MISSION -->
+      <div id="scene-web" class="scene">
+        <div class="hdr">
+          <div class="hdr-line">
+            <span class="brand">* CAPRIGO</span>
+            <span class="sep">|</span>
+            <span class="muted">local</span>
+            <span class="sep">|</span>
+            <span class="online"> LM STUDIO ONLINE </span>
+            <span class="sep">|</span>
+            <span class="model">qwen2.5-coder-7b-instruct</span>
+            <span class="sep">|</span>
+            <span class="status busy">⠹ processing…</span>
+          </div>
+        </div>
+        <div class="rule"></div>
+        <div class="cwd">  cwd  C:\Projects\Caprigo</div>
+        <div class="rule"></div>
+        <div class="body">
+          <div class="col">
+            <div class="label"> AGENTS</div>
+            <div class="subrule">────────</div>
+            <div class="agent-name">* Caprigo</div>
+            <div class="ok">   active</div>
+            <div class="dim">   mode LOOP</div>
+            <div class="dim">   think ON</div>
+          </div>
+          <div class="col session">
+            <div class="you">you › search for local AI meetups near me this month</div>
+            <div class="card">
+              <div><span class="card-b">╭─</span> <span class="card-h">web_search</span></div>
+              <div class="card-arg">local AI meetups near me</div>
+              <div class="card-end ok"><span class="card-b">╰─</span> ✓ 8 results (Brave)</div>
+            </div>
+            <div class="card">
+              <div><span class="card-b">╭─</span> <span class="card-h">web_fetch</span></div>
+              <div class="card-path">https://meetup.com/…</div>
+              <div class="card-end ok"><span class="card-b">╰─</span> ✓ 4.2k chars</div>
+            </div>
+            <div class="reply">Found 3 active groups: Caprigo Dev Night (Thu), LM Studio Users (Sat), and a general AI builders meetup next week.</div>
+          </div>
+          <div class="col">
+            <div class="label"> CONTEXT</div>
+            <div class="subrule">─────────</div>
+            <div class="dim"> Caps</div>
+            <div class="cap-line ok"> LMS up</div>
+            <div class="cap-line ok"> Browser ok</div>
+            <div class="cap-line ok"> Desktop ok</div>
+            <div class="cap-line ok"> Web brave</div>
+            <div class="cap-line ok"> Mission web_answer</div>
+            <div class="cap-line purple"> Dialect openai</div>
+            <div class="cap-line teal"> Brain 5 sticky</div>
+            <br />
+            <div class="dim"> Goal</div>
+            <div> find local AI meetups</div>
+          </div>
+        </div>
+        <div class="input">Ask Caprigo…  double-Enter to STEER while busy<span class="cursor"></span></div>
+      </div>
+
+      <!-- FILE WRITE MISSION -->
+      <div id="scene-write" class="scene">
+        <div class="hdr">
+          <div class="hdr-line">
+            <span class="brand">* CAPRIGO</span>
+            <span class="sep">|</span>
+            <span class="muted">local</span>
+            <span class="sep">|</span>
+            <span class="online"> LM STUDIO ONLINE </span>
+            <span class="sep">|</span>
+            <span class="model">qwen2.5-coder-7b-instruct</span>
+            <span class="sep">|</span>
+            <span class="status">ready</span>
+          </div>
+        </div>
+        <div class="rule"></div>
+        <div class="cwd">  cwd  C:\Projects\Caprigo</div>
+        <div class="rule"></div>
+        <div class="body">
+          <div class="col">
+            <div class="label"> AGENTS</div>
+            <div class="subrule">────────</div>
+            <div class="agent-name">* Caprigo</div>
+            <div class="ok">   active</div>
+            <div class="dim">   mode chat</div>
+            <div class="dim">   think ON</div>
+          </div>
+          <div class="col session">
+            <div class="you">you › write a sunset animation html file in generated/</div>
+            <div class="card">
+              <div><span class="card-b">╭─</span> <span class="card-h">write_file</span></div>
+              <div class="card-path">generated/animation/sunset.html</div>
+              <div class="card-end ok"><span class="card-b">╰─</span> ✓ wrote 2.1 KB</div>
+            </div>
+            <div class="card">
+              <div><span class="card-b">╭─</span> <span class="card-h">browser_open</span></div>
+              <div class="card-path">generated/animation/sunset.html</div>
+              <div class="card-end ok"><span class="card-b">╰─</span> ✓ opened in Chromium</div>
+            </div>
+            <div class="reply">Created sunset.html with CSS gradient animation. Opened in browser for preview.</div>
+          </div>
+          <div class="col">
+            <div class="label"> CONTEXT</div>
+            <div class="subrule">─────────</div>
+            <div class="dim"> Caps</div>
+            <div class="cap-line ok"> LMS up</div>
+            <div class="cap-line ok"> Browser ok</div>
+            <div class="cap-line ok"> Mission write_html_file</div>
+            <div class="cap-line purple"> Dialect openai</div>
+            <div class="cap-line teal"> Brain 2 sticky</div>
+            <br />
+            <div class="dim"> Files</div>
+            <div class="cap-line warn"> sunset.html</div>
+            <br />
+            <div class="dim"> Goal</div>
+            <div> write sunset animation</div>
+          </div>
+        </div>
+        <div class="input">Ask Caprigo…  /save  /sessions<span class="cursor"></span></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const scene = params.get('scene') || 'notepad';
+    const layout = params.get('layout') || 'shot';
+    document.body.className = layout;
+    document.querySelectorAll('.scene').forEach(el => el.classList.remove('active'));
+    const active = document.getElementById('scene-' + scene);
+    if (active) active.classList.add('active');
+  </script>
+</body>
+</html>

@@ -1,5 +1,28 @@
 ﻿# HandOff — Caprigo
 
+## Auto (2026-08-19) — CLI-only product pivot
+
+**Lead with minimal local-first CLI.** Removed web/gateway from default install, launch, and marketing.
+
+**Changed:**
+- `npm run build` → agent + cli only (`build:legacy` for old web/gateway stack)
+- `npm run start` → embedded HUD (`caprigo tui`)
+- `launch.ps1` → delegates to `launch-hud.ps1`
+- `setup.ps1` → no web build; `-LaunchHud` replaces gateway launch flags
+- Deleted web marketing assets + `seed-demo-crew.cjs` + `capture-marketing-screenshots.cjs`
+- README, INSTALL_AND_FIRST_RUN, SOCIAL_LAUNCH, `.env.example` → LM Studio CLI path
+- CLI `setup` / `onboard` / interactive setup → HUD-first (no browser/gateway prompts)
+
+**Daily path:** LM Studio up → `.\launch-hud.ps1` → harness missions.
+
+**Screenshots:** `npm run screenshots` → `docs/assets/hud-*.png` (mock HUD). Live terminal: see `docs/SCREENSHOTS.md`.
+
+**Future release (kept in repo, not shipped):** `packages/web` + `packages/gateway` — web workspace / fleet board. Build with `npm run build:legacy` when revisiting. Do not promote in README or install path until a dedicated release.
+
+**Website (2026-08-19):** `caprigo-website` redesigned for CLI HUD — teal/purple theme, hud-*.png hero/missions, install steps for `launch-hud.ps1`. Clone at `Projects/Tools/caprigo-website`. Push `main` for Railway deploy.
+
+— Auto
+
 ## Auto (2026-08-19) — Launch pack for online clout
 
 Shipped share-ready surface area (no commit yet — large local diff still unpushed):
@@ -12,6 +35,11 @@ Shipped share-ready surface area (no commit yet — large local diff still unpus
 **To post:** regen screenshots if UI changed → push repo → use `SOCIAL_LAUNCH.md` → attach `docs/assets/board-crew.png`.
 
 GitHub repo description/homepage updated via `gh repo edit` → caprigoai.com.
+
+**Pushed (2026-08-19):**
+- `doteyeso-ops/caprigo` → `main` + `feat/lmstudio-cli-harness` (merge + launch pack)
+- `doteyeso-ops/caprigo-website` → `main` (harness UI redesign)
+- Railway should auto-deploy website from `caprigo-website` main within a few minutes
 
 — Auto
 

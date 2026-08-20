@@ -4,7 +4,7 @@
 [![website](https://img.shields.io/badge/site-caprigoai.com-8B7355?style=flat)](https://caprigoai.com)
 [![license](https://img.shields.io/badge/license-MIT-blue?style=flat)](LICENSE)
 
-**Local-first agent workspace.** Connect your model once, launch persistent agents, and operate them across chat, tools, scripts, and multi-agent crews — on your machine, with full visibility.
+**Local-first agent harness in your terminal.** LM Studio (or any OpenAI-compatible backend) runs in-process — no gateway, no browser dashboard required.
 
 | | |
 |-|-|
@@ -12,80 +12,84 @@
 | Repo | https://github.com/doteyeso-ops/caprigo |
 | Credit | **b_Radford** · Vibes-Coded |
 | Marketplace | [vibes-coded.com](https://vibes-coded.com) |
-| AMD lab | [rx580-vulkan-agents](https://github.com/doteyeso-ops/rx580-vulkan-agents) · [docs/AMD.md](docs/AMD.md) |
 
-**8GB / scrap GPUs:** set `CAPRIGO_LEAN_TOOLS=1` so unrestricted agents send ~17 core tools instead of the full catalog. Assign skills when you need vibes / Agent Skills / MCP extras.
+![Caprigo HUD — embedded CLI harness with LM Studio](docs/assets/hud-terminal.png)
 
-- **Caprigo Core** — gateway, agent loop, skills, sessions, orchestration APIs
-- **Caprigo CLI** — `caprigo` for setup, doctor, chat, agents, skills
-- **Caprigo Mesh** — agent networking (planned)
-
-![Caprigo Board — orchestrator and worker crew on the operational canvas](docs/assets/board-crew.png)
-
-## Demo (AMD)
-
-[~72 second walkthrough](docs/demo/Caprigo_AMD_Demo.mp4) — Caprigo Overview / Session / Board on an RX 580 Vulkan lab baseline.
-
-More: [docs/AMD.md](docs/AMD.md) · [rx580-vulkan-agents](https://github.com/doteyeso-ops/rx580-vulkan-agents)
-
-## Why people use Caprigo
-
-| You get | What it means |
-|--------|----------------|
-| Persistent agents | Named workers with objectives, history, and runtime state |
-| Local execution | Files, shell, scripts, and tools on your machine |
-| Model-agnostic backends | Ollama or OpenAI-compatible (LM Studio, OpenRouter, Groq, …) |
-| Operational visibility | Trace exports, crew boards, orchestrator links |
-| Expandable skills | Local JS, `SKILL.md`, MCP, marketplace imports |
-
-## Screenshots
-
-| Overview | Board (crew ops) |
-|----------|------------------|
-| ![Overview](docs/assets/overview.png) | ![Board](docs/assets/board-crew.png) |
-
-Deep links: `/?tab=overview` · `/?tab=board` · `/?tab=session`
-
-## Built-in workflow crews
-
-- **Repo Crew** — scout + operator under a lead
-- **Automation Crew** — script runner + ops reporter
-- **Launch Audit Crew** — surface + risk reviewers
-- **PR Review Crew** — diff scout + risk reviewer
+<p align="center">
+  <img src="docs/assets/hud-web-mission.png" alt="Web search mission" width="49%" />
+  <img src="docs/assets/hud-write-mission.png" alt="Write file mission" width="49%" />
+</p>
 
 ## Quick start
 
-```bash
+```powershell
 git clone https://github.com/doteyeso-ops/caprigo.git
 cd caprigo
-cp .env.example .env
 npm install
 npm run build
-npm run build:web
-npm run start
+# LM Studio: enable Local Server, load a tool-capable model
+.\launch-hud.ps1
 ```
 
-Open **http://127.0.0.1:18789**.
-
-**Windows:** `.\setup.ps1` · daily: `.\launch.ps1`
+Or after build:
 
 ```bash
-caprigo setup --interactive
-caprigo doctor
+caprigo          # embedded HUD (default)
+caprigo tui      # explicit
+caprigo doctor   # LM Studio / .env / permissions check
+caprigo connect  # discover LM Studio and write .env
 ```
 
-See [INSTALL_AND_FIRST_RUN.md](INSTALL_AND_FIRST_RUN.md) and [SOCIAL_LAUNCH.md](SOCIAL_LAUNCH.md) for beta install + launch copy.
+Windows one-shot setup:
 
-## Project docs
+```powershell
+.\setup.ps1 -LaunchHud
+```
+
+## Configure LM Studio
+
+Copy `.env.example` → `.env`:
+
+```env
+CAPRIGO_LLM_PROVIDER=openai_compatible
+OPENAI_BASE_URL=http://127.0.0.1:1234/v1
+DEFAULT_MODEL=qwen2.5-coder-7b-instruct
+CAPRIGO_HARNESS_MODE=1
+```
+
+## What the HUD gives you
+
+| Pane | Purpose |
+|------|---------|
+| **Header** | LM Studio online/offline, model, busy pinwheel |
+| **Agents** | Session list, `/loop`, `/think`, `/models` |
+| **Session** | Live tool cards, replies, mission progress |
+| **Context** | Caps (Desktop, OCR, Web, Brain, Dialect, Mission) |
+| **Input** | Double-Enter send (STEER), `/bug`, `/brain`, `/clear` |
+
+Harness features: **HOME** playbooks (notepad, web, write file), **desktop_*** body, **brain** lessons, **stumble** recovery, **model grapple** dialect profiles.
+
+## Screenshots
+
+Regenerate marketing PNGs from the HUD mock:
+
+```bash
+npm run screenshots
+```
+
+See [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) for asset list and live terminal capture tips.
+
+## 8GB / scrap GPUs
+
+`CAPRIGO_LEAN_TOOLS=1` — lean tool catalog. Mission-scoped tools also keep LM Studio prefill small.
+
+## Docs
 
 - [INSTALL_AND_FIRST_RUN.md](INSTALL_AND_FIRST_RUN.md)
 - [SOCIAL_LAUNCH.md](SOCIAL_LAUNCH.md)
-- [BETA_SMOKE_TEST.md](BETA_SMOKE_TEST.md)
+- [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md)
+- [HandOff.md](HandOff.md)
 - [docs/AMD.md](docs/AMD.md)
-
-## Status
-
-Caprigo is in **beta**. Stars welcome; issues with repro steps help more.
 
 ## License
 

@@ -25,12 +25,6 @@ function envFilePath(): string {
   return path.join(repoRootFromCli(), '.env');
 }
 
-function npmCommandForHost(): { command: string; argsPrefix: string[] } {
-  return process.platform === 'win32'
-    ? { command: 'npm.cmd', argsPrefix: [] }
-    : { command: 'npm', argsPrefix: [] };
-}
-
 function parseDotEnvFile(filePath: string): Record<string, string> {
   if (!fs.existsSync(filePath)) return {};
   const raw = fs.readFileSync(filePath, 'utf8');
@@ -126,25 +120,6 @@ async function gatewayReachable(url: string): Promise<boolean> {
   }
 }
 
-async function waitForGateway(url: string, timeoutMs = 30000): Promise<boolean> {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    if (await gatewayReachable(url)) return true;
-    await new Promise(resolve => setTimeout(resolve, 1500));
-  }
-  return false;
-}
-
-function startGatewayDetached(): void {
-  const repoRoot = repoRootFromCli();
-  const npm = npmCommandForHost();
-  spawn(npm.command, [...npm.argsPrefix, 'run', 'start'], {
-    cwd: repoRoot,
-    detached: true,
-    stdio: 'ignore',
-  }).unref();
-}
-
 async function runDoctor(json = false): Promise<void> {
   const repoRoot = repoRootFromCli();
   const envPath = envFilePath();
@@ -218,7 +193,6 @@ async function runDoctor(json = false): Promise<void> {
     setupLine('Permissions file', local.permissionsExists, permissionsPath),
     setupLine('Workspace root', true, workspaceRoot),
     setupLine('Data root', true, dataRoot),
-    setupLine('Gateway', gatewayUp, gatewayUrl),
   ];
 
   if (local.llmProvider || local.defaultModel) {
@@ -297,8 +271,8 @@ async function runDoctor(json = false): Promise<void> {
   console.log(
     framedSection('Recommended use', [
       'Use `caprigo setup --interactive` for first-run config.',
-      'Use `./launch.ps1` for normal startup after setup.',
-      'Use Overview to verify backend/model, then create the first agent.',
+      'Use `./launch-hud.ps1` or `caprigo tui` for daily startup.',
+      'Use `caprigo doctor` to verify LM Studio before sessions.',
       `Permissions live at ${permissionsPath}. Expand scopes there intentionally if local tool access is denied.`,
     ])
   );
@@ -307,7 +281,6 @@ async function runDoctor(json = false): Promise<void> {
 
 type InteractiveSetupOptions = {
   launch?: boolean;
-  openBrowser?: boolean;
 };
 
 async function runInteractiveSetup(options: InteractiveSetupOptions = {}): Promise<void> {
@@ -440,63 +413,32 @@ async function runInteractiveSetup(options: InteractiveSetupOptions = {}): Promi
       console.log(warn('Skipped writing .env file.'));
     }
 
-    const gatewayUrl = getGatewayUrl();
-    const gatewayWasReachable = await gatewayReachable(gatewayUrl);
-    const shouldStartGateway =
+    const shouldLaunchHud =
       typeof options.launch === 'boolean'
         ? options.launch
-        : await promptYesNo(
-            rl,
-            'Start Caprigo gateway after setup',
-            !gatewayWasReachable
-          );
+        : await promptYesNo(rl, 'Launch the CLI HUD now (requires LM Studio + loaded model)', false);
 
-    let gatewayStarted = false;
-    let gatewayReady = false;
-    if (shouldStartGateway) {
-      gatewayStarted = true;
+    if (shouldLaunchHud) {
       console.log('');
-      console.log(dim('Starting Caprigo gateway...'));
-      startGatewayDetached();
-      gatewayReady = await waitForGateway(gatewayUrl, 30000);
-      console.log(gatewayReady ? ok(`Gateway ready at ${gatewayUrl}`) : warn(`Gateway did not report ready within 30s at ${gatewayUrl}`));
-    }
-
-    const shouldOpenBrowser =
-      typeof options.openBrowser === 'boolean'
-        ? options.openBrowser
-        : gatewayStarted
-          ? gatewayReady && (await promptYesNo(rl, 'Open Caprigo Overview in your browser now', true))
-          : await promptYesNo(rl, 'Open Caprigo Overview in your browser now', false);
-
-    if (shouldOpenBrowser) {
-      openInBrowser(gatewayUrl);
+      console.log(dim('Launching embedded HUD…'));
+      await runTui();
     }
 
     console.log('');
     console.log(
       framedSection('Next actions', [
-        gatewayStarted
-          ? gatewayReady
-            ? `1. Overview should now be available at ${gatewayUrl}`
-            : `1. Check gateway startup manually with npm run start`
-          : `1. Start Caprigo: npm run start`,
-        `2. Run setup check: node packages/cli/dist/index.js setup`,
-        `3. Open Overview and confirm backend + model`,
-        `4. Create the first agent`,
+        '1. Start LM Studio Local Server and load a tool-capable model.',
+        '2. Run `caprigo doctor` to verify backend reachability.',
+        '3. Launch HUD: `.\\launch-hud.ps1` or `caprigo tui`.',
+        '4. Try a mission: open notepad and type hello world',
       ])
     );
     console.log('');
     console.log(
       framedSection('Setup complete', [
         `Config file: ${envPath}`,
-        `Gateway URL: ${gatewayUrl}`,
-        gatewayStarted
-          ? gatewayReady
-            ? 'Status: Caprigo launched successfully.'
-            : 'Status: launch attempted, but health did not confirm in time.'
-          : 'Status: config saved; launch was left to the user.',
-        `Next: open Overview, confirm backend + model, then create the first agent.`,
+        shouldLaunchHud ? 'Status: HUD session ended.' : 'Status: config saved.',
+        'Daily path: launch-hud.ps1 → embedded agent harness.',
       ])
     );
     console.log('');
@@ -740,10 +682,8 @@ program
   .command('setup')
   .description('Run first-run setup checks and show the next required actions')
   .option('-i, --interactive', 'Prompt for provider/model and optionally write .env')
-  .option('--launch', 'Start Caprigo after interactive setup')
-  .option('--no-launch', 'Do not start Caprigo after interactive setup')
-  .option('--open-browser', 'Open Overview in the browser after interactive setup')
-  .option('--no-open-browser', 'Do not open Overview after interactive setup')
+  .option('--launch', 'Launch CLI HUD after interactive setup')
+  .option('--no-launch', 'Do not launch HUD after interactive setup')
   .action(async opts => {
     if (opts.interactive || process.env.CAPRIGO_SETUP_INTERACTIVE === '1') {
       const launch =
@@ -754,97 +694,77 @@ program
             : process.env.CAPRIGO_SETUP_AUTO_LAUNCH === '0'
               ? false
               : undefined;
-      const openBrowser =
-        typeof opts.openBrowser === 'boolean'
-          ? opts.openBrowser
-          : process.env.CAPRIGO_SETUP_OPEN_BROWSER === '1'
-            ? true
-            : process.env.CAPRIGO_SETUP_OPEN_BROWSER === '0'
-              ? false
-              : undefined;
-      await runInteractiveSetup({ launch, openBrowser });
+      await runInteractiveSetup({ launch });
       return;
     }
-    const gatewayUrl = getGatewayUrl();
+
+    const envPath = envFilePath();
+    const envValues = parseDotEnvFile(envPath);
+    const provider = String(envValues.CAPRIGO_LLM_PROVIDER || caprigoEnv('LLM_PROVIDER') || 'openai_compatible').toLowerCase();
+    const model = String(envValues.DEFAULT_MODEL || process.env.DEFAULT_MODEL || '').trim();
+    const ollamaUrl = String(envValues.OLLAMA_URL || process.env.OLLAMA_URL || 'http://127.0.0.1:11434');
+    const openaiBase = String(envValues.OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || 'http://127.0.0.1:1234/v1');
+    const openaiKey = String(envValues.OPENAI_API_KEY || process.env.OPENAI_API_KEY || '');
+
+    let providerReady = false;
+    let models: string[] = [];
     try {
-      const [health, runtime, skills, sessions] = await Promise.all([
-        gatewayJson<Record<string, unknown>>('/health'),
-        gatewayJson<{ llmProvider?: string; engine?: { model?: string | null } }>('/api/runtime'),
-        gatewayJson<{ skills?: Array<{ source?: string }> }>('/api/skills'),
-        gatewayJson<{ sessions?: Array<{ id: string }> }>('/api/sessions'),
-      ]);
-
-      const llm = health.llm as Record<string, unknown> | undefined;
-      const provider = String(runtime.llmProvider || llm?.provider || 'unknown');
-      const model = String(runtime.engine?.model || '').trim();
-      const providerReady =
-        provider === 'ollama'
-          ? llm?.ollama === 'ok'
-          : provider === 'openai' || provider === 'openai_compatible'
-            ? llm?.openai === 'ok'
-            : false;
-
-      let models: string[] = [];
-      try {
-        const modelPath =
-          provider === 'openai' || provider === 'openai_compatible' ? '/api/openai/models' : '/api/ollama/models';
-        const modelData = await gatewayJson<{ models?: string[] }>(modelPath);
-        models = Array.isArray(modelData.models) ? modelData.models : [];
-      } catch {
-        models = [];
-      }
-
-      const skillCount = (skills.skills || []).length;
-      const sessionCount = (sessions.sessions || []).length;
-      const modelListed = !model ? false : models.length === 0 ? true : models.includes(model);
-
-      console.log('');
-      console.log(titleLine('Caprigo - setup check'));
-      console.log('');
-      console.log(
-        framedSection('Setup status', [
-          setupLine('Gateway', true, gatewayUrl),
-          setupLine('LLM backend', providerReady, `${provider}${providerReady ? ' reachable' : ' needs attention'}`),
-          setupLine('Default model', !!model && modelListed, model || 'not configured'),
-          setupLine('Tools and skills', skillCount > 0, `${skillCount} loaded`),
-          setupLine('First agent', sessionCount > 0, sessionCount > 0 ? `${sessionCount} created` : 'not created yet'),
-        ])
-      );
-      console.log('');
-      console.log(
-        framedSection('Recommended order', [
-          '1. Confirm the backend shows PASS.',
-          '2. Confirm the model is the one you intend to use.',
-          '3. Open Overview and check skills plus marketplace imports.',
-          '4. Create one focused agent.',
-          '5. Move to Session or Board for live operation.',
-        ])
-      );
-      console.log('');
-      if (!providerReady || !model || !modelListed) {
-        console.log(warn('Next action: finish runtime/model setup before expecting agents to operate reliably.'));
-      } else if (sessionCount === 0) {
-        console.log(warn('Next action: create the first agent from Overview or `caprigo agents create`.'));
+      if (provider === 'ollama') {
+        models = await fetchOllamaTags(ollamaUrl);
+        providerReady = models.length > 0;
       } else {
-        console.log(ok('Setup baseline looks good. Agents can operate now.'));
+        models = await fetchOpenAiModels(openaiBase, openaiKey);
+        providerReady = models.length > 0;
       }
-      console.log('');
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.log('');
-      console.log(titleLine('Caprigo - setup check'));
-      console.log('');
-      console.log(
-        framedSection('Gateway not ready', [
-          `Gateway URL: ${gatewayUrl}`,
-          `Error: ${msg}`,
-          'Start Caprigo with `npm run start` from the repo root.',
-          'Then open Overview and confirm backend + model health.',
-        ])
-      );
-      console.log('');
+    } catch {
+      providerReady = false;
+      models = [];
+    }
+
+    let lmProbeOk = false;
+    try {
+      const { probeLmStudio } = await import('./embedded-runtime');
+      const probe = await probeLmStudio();
+      lmProbeOk = probe.ok;
+      if (probe.models.length > 0 && models.length === 0) models = probe.models;
+    } catch {
+      lmProbeOk = false;
+    }
+
+    const backendReady = provider === 'ollama' ? providerReady : providerReady || lmProbeOk;
+    const modelListed = !model ? false : models.length === 0 ? true : models.includes(model);
+
+    console.log('');
+    console.log(titleLine('Caprigo - setup check'));
+    console.log('');
+    console.log(
+      framedSection('Setup status', [
+        setupLine('.env file', fs.existsSync(envPath), envPath),
+        setupLine('LLM backend', backendReady, `${provider}${backendReady ? ' reachable' : ' needs attention'}`),
+        setupLine('Default model', !!model && modelListed, model || 'not configured'),
+        setupLine('CLI build', fs.existsSync(path.join(repoRootFromCli(), 'packages/cli/dist/index.js')), 'packages/cli/dist'),
+      ])
+    );
+    console.log('');
+    console.log(
+      framedSection('Recommended order', [
+        '1. Confirm LM Studio (or backend) shows PASS in `caprigo doctor`.',
+        '2. Confirm DEFAULT_MODEL matches a loaded tool-capable model.',
+        '3. Launch HUD: `.\\launch-hud.ps1` or `caprigo tui`.',
+        '4. Run a harness mission to verify desktop/web tools.',
+      ])
+    );
+    console.log('');
+    if (!backendReady || !model) {
+      console.log(warn('Next action: finish backend/model setup — try `caprigo connect` or `caprigo setup --interactive`.'));
       process.exit(1);
     }
+    if (!modelListed) {
+      console.log(warn('Next action: DEFAULT_MODEL is not in the backend model list — load it or update .env.'));
+    } else {
+      console.log(ok('Setup baseline looks good. Launch the HUD.'));
+    }
+    console.log('');
   });
 
 program
@@ -931,33 +851,36 @@ program
     console.log(titleLine('Caprigo - user setup path'));
     console.log('');
     console.log(framedSection('1 - Choose and verify an LLM backend', [
-      `${bold('A) Ollama (default)')}  CAPRIGO_LLM_PROVIDER=ollama`,
-      `              OLLAMA_URL=http://localhost:11434`,
-      `              DEFAULT_MODEL=qwen3:latest`,
+      `${bold('A) LM Studio (recommended)')}  CAPRIGO_LLM_PROVIDER=openai_compatible`,
+      `              OPENAI_BASE_URL=http://127.0.0.1:1234/v1`,
+      `              DEFAULT_MODEL=qwen2.5-coder-7b-instruct`,
+      `              CAPRIGO_HARNESS_MODE=1`,
       '',
-      `${bold('B) OpenAI-compatible')}  CAPRIGO_LLM_PROVIDER=openai`,
+      `${bold('B) Ollama')}  CAPRIGO_LLM_PROVIDER=ollama`,
+      `              OLLAMA_URL=http://127.0.0.1:11434`,
+      `              DEFAULT_MODEL=qwen2.5-coder:7b`,
+      '',
+      `${bold('C) Remote API')}  CAPRIGO_LLM_PROVIDER=openai`,
       `              OPENAI_BASE_URL=https://api.openai.com/v1`,
       `              OPENAI_API_KEY=...`,
-      `              DEFAULT_MODEL=gpt-4o-mini`,
     ]));
     console.log('');
-    console.log(framedSection('2 - Add optional skills and imports', [
-      `Drop JS skills in ${skillsDir}`,
-      `Or set CAPRIGO_SKILLS_DIR`,
-      `Agent Skills (SKILL.md): skills/agentskills/`,
+    console.log(framedSection('2 - Build and configure', [
+      `${bold('npm install')} && ${bold('npm run build')}`,
+      `${bold('caprigo setup --interactive')} or ${bold('caprigo connect')}`,
+      `Optional skills: ${skillsDir}`,
     ]));
     console.log('');
-    console.log(framedSection('3 - Start Caprigo and confirm runtime health', [
-      `Dashboard + API: ${bold('npm run start')} (repo root)`,
-      `CLI default URL: ${getGatewayUrl()} (${dim('CAPRIGO_GATEWAY_URL')})`,
-      `Remote mutations: set ${dim('CAPRIGO_API_TOKEN')} and pass ${dim('x-caprigo-token')}`,
+    console.log(framedSection('3 - Launch the CLI HUD', [
+      `${bold('.\\launch-hud.ps1')} (Windows) or ${bold('caprigo tui')}`,
+      `${bold('caprigo doctor')} — verify LM Studio + .env`,
+      `No gateway required for the default harness.`,
     ]));
     console.log('');
-    console.log(framedSection('4 - Then let the agent operate', [
-      `Overview: confirm backend, model, skills, and create the first agent`,
-      `Board: run scripts, chain agents, and manage fleet operations`,
-      `Session: chat with one agent after setup is complete`,
-      `Landing page / docs: INSTALL_AND_FIRST_RUN.md and LANDING_PAGE_BRIEF.md`,
+    console.log(framedSection('4 - First session', [
+      `Try: open notepad and type hello world`,
+      `/brain — lessons · /bug — handoff pack · /clear — reset session`,
+      `Docs: INSTALL_AND_FIRST_RUN.md`,
     ]));
     console.log('');
   });

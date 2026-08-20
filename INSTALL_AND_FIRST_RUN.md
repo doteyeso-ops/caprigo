@@ -1,138 +1,101 @@
 # Caprigo Install And First Run
 
-Caprigo should feel simple at the boundary:
-
-- the **user** sets up Caprigo,
-- the **agent** operates inside Caprigo after setup is complete.
-
-This is the intended beta path.
+Caprigo is a **minimal local-first CLI harness**. You configure LM Studio (or another OpenAI-compatible backend), build the repo, and run the terminal HUD.
 
 ## Fastest Windows path
 
 From the repo root:
 
 ```powershell
-.\setup.ps1
+.\setup.ps1 -LaunchHud
 ```
 
-Or use:
-
-```bat
-setup.bat
-```
-
-That wrapper runs dependency install, package builds, web build, and then launches `caprigo setup --interactive`.
-
-Useful wrapper switches:
+Or step by step:
 
 ```powershell
-.\setup.ps1 -Launch
 .\setup.ps1 -NoLaunch
-.\setup.ps1 -OpenBrowser
-.\setup.ps1 -NoOpenBrowser
+.\launch-hud.ps1
 ```
 
-For normal day-to-day startup after setup is already done:
+Batch wrapper: `setup.bat` · daily launcher: `launch.bat` (calls `launch-hud.ps1`).
 
-```powershell
-.\launch.ps1
-```
+## Prerequisites
 
-## What the user does
+- **Node.js 18+**
+- **LM Studio** with Local Server enabled (default port `1234`)
+- A **tool-capable model** loaded (e.g. `qwen2.5-coder-7b-instruct`)
 
-1. Install prerequisites.
-2. Start Caprigo.
-3. Confirm runtime health.
-4. Verify the model.
-5. Create the first agent.
+Optional on Windows: Playwright Chromium for browser skills; desktop body uses built-in Windows automation.
 
-## What the agent does
-
-After setup, the agent can:
-
-- chat through the connected model,
-- use assigned tools and skills,
-- run local scripts when the session/runtime mode allows it,
-- coordinate other agents if it is an orchestrator,
-- operate against the user workspace and connected services.
-
-## Recommended install path
-
-### 1. Install dependencies
+## Install
 
 ```bash
+git clone https://github.com/doteyeso-ops/caprigo.git
+cd caprigo
 npm install
+npm run build
 ```
 
-### 2. Build Caprigo
+## Configure backend
 
 ```bash
-npm run build
-npm run build:web
+cp .env.example .env
+caprigo setup --interactive
+# or auto-discover LM Studio:
+caprigo connect --launch
 ```
 
-### 3. Configure the LLM backend
+Default LM Studio `.env`:
 
-Default local path:
+```env
+CAPRIGO_LLM_PROVIDER=openai_compatible
+OPENAI_BASE_URL=http://127.0.0.1:1234/v1
+DEFAULT_MODEL=qwen2.5-coder-7b-instruct
+CAPRIGO_HARNESS_MODE=1
+```
+
+Ollama alternative:
 
 ```env
 CAPRIGO_LLM_PROVIDER=ollama
 OLLAMA_URL=http://127.0.0.1:11434
-DEFAULT_MODEL=qwen3.5:latest
+DEFAULT_MODEL=qwen2.5-coder:7b
 ```
 
-Remote API path:
+## Launch
 
-```env
-CAPRIGO_LLM_PROVIDER=openai
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_API_KEY=your_key_here
-DEFAULT_MODEL=gpt-4o-mini
+```powershell
+.\launch-hud.ps1
 ```
-
-### 4. Start Caprigo
 
 ```bash
-npm run start
+caprigo           # same as caprigo tui
+caprigo doctor    # verify LM Studio + config
 ```
 
-Then open `http://127.0.0.1:18789`.
+## First session
 
-### 5. Use Overview first
+1. Confirm header shows **LM STUDIO ONLINE** (or your backend).
+2. Try a harness mission: `open notepad and type hello world`
+3. Watch tool cards in the Session pane; check Context caps (Desktop, Mission).
+4. Use `/brain` to inspect lessons; `/bug` to pack a handoff report on failures.
 
-On first launch, the user should do this in order:
+Permissions baseline: `~/.caprigo/permissions.json` approves workspace and Caprigo data roots by default.
 
-1. Open `Overview`.
-2. Confirm LLM/backend health.
-3. Confirm the intended model.
-4. Confirm skills and optional marketplace imports.
-5. Create one focused agent.
+## Troubleshooting
 
-Caprigo also writes a baseline permissions file at `~/.caprigo/permissions.json`. By default it approves the workspace root and Caprigo data root for filesystem/shell working-directory access.
+| Issue | Fix |
+|-------|-----|
+| LM Studio offline | Start Local Server; load a model; `caprigo connect` |
+| Empty model replies | Prefer a tool-capable model; `/clear` and retry |
+| Build missing | `npm run build` or `.\launch-hud.ps1 -Rebuild` |
+| Doctor details | `caprigo doctor` |
 
-### 6. Let the agent operate
-
-Use:
-
-- `Session` for one agent conversation
-- `Board` for offline scripts, orchestration, and fleet operations
-- `Settings` for engine and connection changes
-
-## CLI shortcut
-
-Caprigo includes a quick setup helper:
+## CLI reference
 
 ```bash
-caprigo onboard
-caprigo setup --interactive
+caprigo onboard              # print setup checklist
+caprigo setup --interactive  # write .env
+caprigo connect              # discover LM Studio on LAN
+caprigo tui                  # embedded HUD
 ```
-
-`caprigo onboard` is the short reference. `caprigo setup --interactive` is the guided first-run path for choosing provider, model, writing `.env`, optionally launching the gateway, and opening Overview.
-
-For troubleshooting:
-
-```bash
-caprigo doctor
-```
-
-`doctor` reports local paths/config even if the gateway is down, then adds runtime details when Caprigo is reachable.

@@ -1,29 +1,28 @@
 {
   "name": "caprigo",
   "version": "2.0.0",
-  "description": "Caprigo - local-first AI agents. Caprigo Core runtime, web UI, Caprigo CLI.",
+  "description": "Caprigo — local-first CLI agent harness for LM Studio and OpenAI-compatible backends.",
   "license": "MIT",
   "private": true,
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @caprigo/shared && npm run build -w @caprigo/ollama-client && npm run build -w @caprigo/chat-backend && npm run build -w @caprigo/user-skills-loader && npm run build -w @caprigo/agent && npm run build -w @caprigo/gateway && npm run build -w @caprigo/cli",
+    "build": "npm run build -w @caprigo/shared && npm run build -w @caprigo/ollama-client && npm run build -w @caprigo/chat-backend && npm run build -w @caprigo/user-skills-loader && npm run build -w @caprigo/agent && npm run build -w @caprigo/cli",
+    "build:gateway": "npm run build -w @caprigo/gateway",
     "build:web": "npm run build -w @caprigo/web",
-    "start": "node packages/gateway/dist/index.js",
+    "build:legacy": "npm run build && npm run build:gateway && npm run build:web",
+    "start": "node packages/cli/dist/index.js",
+    "hud": "node packages/cli/dist/index.js tui",
     "gateway": "npm run start -w @caprigo/gateway",
     "test:gateway": "npm run test -w @caprigo/gateway",
-    "web": "npm run dev -w @caprigo/web",
     "cli": "node packages/cli/dist/index.js",
     "caprigo": "node packages/cli/dist/index.js",
-    "launch": "npm run build && npm run build:web && npm run start",
+    "screenshots": "node scripts/capture-harness-screenshots.cjs",
     "imported-hermes:footers": "node scripts/append-imported-hermes-caprigo-footers.mjs",
-    "hermes:footers": "npm run imported-hermes:footers",
-    "seed:demo": "node scripts/seed-demo-crew.cjs --reset",
-    "screenshots": "node scripts/capture-marketing-screenshots.cjs"
+    "hermes:footers": "npm run imported-hermes:footers"
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "license": "MIT"
+  }
 }

@@ -4,10 +4,13 @@
 
 | Name | What it is |
 |------|----------------|
-| **Caprigo** | Local-first **CLI+TUI agent harness** for LM Studio (Hermes-competitive long-horizon tool loops). |
-| **Caprigo Core** | Runtime engine: LLM backends, skills, sessions (`@caprigo/*`). |
-| **Caprigo CLI** | `caprigo` — embedded TUI by default; `caprigo serve` optional gateway. |
+| **Caprigo** | Local-first **CLI HUD harness** for LM Studio — minimal install, embedded agent, no gateway. |
+| **Caprigo Core** | Runtime engine: LLM backends, skills, HOME missions (`@caprigo/*`). |
+| **Caprigo CLI** | `caprigo` / `launch-hud.ps1` — default product surface. |
+| **Caprigo Web** (future) | `packages/web` + `packages/gateway` — fleet/board workspace; kept for a possible later release, not in default build. |
 | **Caprigo Mesh** | Agent networking / federation — **future**, not implemented here yet. |
+
+**Product pivot (2026-08-19):** Ship CLI HUD only. Web/gateway code stays in repo for a future release (`npm run build:legacy`); not part of install, launch, or marketing.
 
 ## Overview
 
